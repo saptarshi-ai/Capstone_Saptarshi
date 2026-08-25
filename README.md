@@ -1,160 +1,126 @@
-# Corporate Finance & Revenue Policy Q&A — RAG Capstone
+<div align="center">
 
-A Retrieval-Augmented Generation (RAG) pipeline for answering corporate finance and revenue policy questions. Built as a capstone project for the IIT Madras AI Engineering programme.
+<!-- Animated header -->
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=00D9FF&center=true&vCenter=true&width=600&lines=Hi+%F0%9F%91%8B%2C+I'm+Saptarshi;Data+Engineer+%7C+BI+Developer;Building+AI+%2B+Data+Systems;7%2B+years+in+the+trenches" alt="Typing SVG" />
 
-The system helps FP&A analysts, controllers, and finance business partners answer policy questions during month-end close, budget cycles, and audit preparation — grounded in IFRS, GAAP (ASC 606, IFRS 15, IFRS 16, IAS 37), and internal finance policy.
+<br/>
 
----
+<!-- Subtitle -->
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=16&pause=2000&color=888888&center=true&vCenter=true&width=600&lines=Australia+%F0%9F%87%A6%F0%9F%87%BA+%7C+Sydney;Finance+%2B+AI+%2B+Automation;Currently%3A+IIT+Madras+AI+Engineering+Programme" alt="Subtitle" />
 
-## What's in here
+<br/><br/>
 
-### Evaluation infrastructure (Module 1 — complete)
+<!-- Social badges -->
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/saptarshi-sengupta)
+[![GitHub followers](https://img.shields.io/github/followers/TAlchemist?style=for-the-badge&color=00D9FF&labelColor=0d1117)](https://github.com/TAlchemist)
 
-A complete LLM-as-judge evaluation system built before any retrieval is wired up, so improvements from RAG are objectively measurable.
-
-- **20-entry golden set** — 14 happy-path / 4 harder (multi-hop) / 2 edge (graceful refusal) questions covering revenue recognition, lease accounting, provisions, intercompany, FX, expense management
-- **3-dimensional LLM judge** — accuracy / groundedness / format, scored 1–4, using forced OpenAI tool calling so output is always structured JSON
-- **SQLite persistence** — `eval_runs` table ties every score to a run label for cross-run comparison
-- **Pairwise A/B comparison** — position-flip debiased (judge runs twice with A/B swapped; winner declared only when both rounds agree)
-- **Critic-creator loop** — iterative prompt refinement; critic identifies worst flaw per round and proposes a one-sentence prompt patch
-
-### API (Module 1 — baseline)
-
-FastAPI service with `/ask`, `/ask_batched`, `/health`, and `/metrics` endpoints. Currently calls the LLM directly (pre-RAG baseline). Retrieval will be wired in Module 2.
+</div>
 
 ---
 
-## Project structure
+<div align="center">
 
-```
-02_capstone_rag_pipeline/
-├── api/
-│   └── main.py                  # FastAPI app (/ask, /health, /metrics)
-├── data/
-│   ├── golden_set.jsonl         # 20-entry locked golden set
-│   ├── prompt-v1.txt            # Minimal system prompt (pairwise variant A)
-│   └── prompt-v2.txt            # Structured system prompt (pairwise variant B)
-├── docs/
-│   ├── adr/
-│   │   ├── 0001-capstone-framing.md   # ADR v1 locked — domain, stack, scope
-│   │   ├── 0001-stakeholder-map.md    # Primary user, success metrics
-│   │   └── 0002-eval-system-decisions.md
-│   ├── dr/
-│   │   └── dr1-summary.md             # Design Review 1 summary
-│   ├── judge-calibration.md           # Human vs LLM judge score comparison
-│   ├── golden-set-notes.md            # Coverage rationale for the golden set
-│   ├── eval-run-001.md                # Baseline eval results
-│   ├── prompt-pairwise-001.md         # A/B comparison findings
-│   └── critic-creator-trace.md        # g015 refinement trace
-├── scripts/
-│   ├── run_eval.py              # Baseline eval runner (CLI)
-│   ├── run_pairwise.py          # A/B prompt comparison (CLI)
-│   └── run_critic_creator.py    # Critic-creator loop (CLI)
-├── src/
-│   ├── eval/
-│   │   ├── judge.py             # 3-dim rubric + forced tool calling
-│   │   ├── golden.py            # JSONL loader + validator
-│   │   ├── pairwise.py          # Position-flip debiased comparison
-│   │   └── critic_creator.py    # Iterative prompt refinement loop
-│   ├── pipeline/
-│   │   └── store.py             # SQLite persistence (answers + eval_runs)
-│   └── rag/                     # Retrieval components (Module 2)
-│       ├── chunking.py
-│       ├── embeddings.py
-│       ├── retriever.py
-│       └── vector_store.py
-└── config/
-    └── settings.py              # Pydantic settings (reads .env)
+### ⚡ What I'm building
+
+</div>
+
+```python
+saptarshi = {
+    "currently_learning": ["RAG pipelines", "LLM evaluation", "AI Engineering"],
+    "building":           ["Finance AI assistant (RAG + FastAPI)", "Personal life OS"],
+    "stack":              ["Python", "SQL", "Power BI", "FastAPI", "dbt", "Azure"],
+    "domain":             ["Data Engineering", "BI", "Finance Automation"],
+    "goal":               "Turn 7 years of data work into AI-powered systems"
+}
 ```
 
 ---
 
-## Quickstart
+<div align="center">
 
-**1. Clone and set up**
+### 🛠 Tech Stack
 
-```bash
-git clone https://github.com/TAlchemist/ai-engineering-capstone.git
-cd ai-engineering-capstone
-pip install openai fastapi uvicorn pydantic-settings
-```
+**Languages & Frameworks**
 
-**2. Set your API key**
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Bash](https://img.shields.io/badge/Bash-121011?style=for-the-badge&logo=gnu-bash&logoColor=white)
 
-```bash
-cp .env.example .env
-# Edit .env and add your OpenAI API key:
-# OPENAI_API_KEY=your-key-here
-```
+**Data & AI**
 
-**3. Run the eval baseline**
+![Power BI](https://img.shields.io/badge/Power_BI-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
+![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 
-```bash
-python scripts/run_eval.py --label baseline-001
-```
+**Cloud & Tools**
 
-Output: per-entry scores + summary table. Results stored in `data/answers.db`.
+![Azure](https://img.shields.io/badge/Azure-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)
+![Git](https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![VS Code](https://img.shields.io/badge/VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)
 
-**4. Run pairwise comparison**
-
-```bash
-python scripts/run_pairwise.py --output data/pairwise-001-results.json
-```
-
-**5. Run critic-creator on the hardest entry**
-
-```bash
-python scripts/run_critic_creator.py --golden-id g015 --max-rounds 3 --threshold 3.5 --output docs/critic-creator-trace.md
-```
-
-**6. Start the API**
-
-```bash
-uvicorn api.main:app --reload
-# Test: curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d '{"question": "What is the accrual basis of accounting?"}'
-```
+</div>
 
 ---
 
-## Eval system design
+<div align="center">
 
-### Judge rubric
+### 📊 GitHub Stats
 
-| Dimension | What it measures | Scale |
-|-----------|-----------------|-------|
-| Accuracy | Factual correctness vs ideal answer | 1–4 |
-| Groundedness | No hallucination; claims are sourceable | 1–4 |
-| Format | Structure, length, finance-domain register | 1–4 |
+<img height="180em" src="https://github-readme-stats.vercel.app/api?username=TAlchemist&show_icons=true&theme=tokyonight&include_all_commits=true&count_private=true&hide_border=true&bg_color=0d1117&title_color=00D9FF&icon_color=00D9FF&text_color=c9d1d9"/>
 
-**Why 1–4 (not 1–5)?** Odd-point scales allow fence-sitting in the middle. Forcing a 4-point scale makes the judge pick a side.
+<img height="180em" src="https://github-readme-stats.vercel.app/api/top-langs/?username=TAlchemist&layout=compact&langs_count=6&theme=tokyonight&hide_border=true&bg_color=0d1117&title_color=00D9FF&text_color=c9d1d9"/>
 
-**Why forced tool calling?** Prevents the LLM judge from returning free-text instead of structured scores.
+</div>
 
-### Golden set design
+<div align="center">
 
-| Bucket | n | Description |
-|--------|---|-------------|
-| happy-path | 14 | Single-hop questions, one policy area applies directly |
-| harder | 4 | Multi-hop questions combining two policy areas, or conditional logic |
-| edge | 2 | Out-of-scope questions — correct answer is graceful refusal + redirect |
+<img src="https://github-readme-streak-stats.herokuapp.com/?user=TAlchemist&theme=tokyonight&hide_border=true&background=0d1117&stroke=00D9FF&ring=00D9FF&fire=FF6B6B&currStreakLabel=00D9FF" alt="streak stats"/>
 
-### Pairwise position-flip debiasing
-
-Each pair is judged twice with A/B positions swapped. A winner is only declared when both rounds agree. Disagreements are recorded as position-bias events and the result is a tie.
+</div>
 
 ---
 
-## Domain scope
+<div align="center">
 
-**In scope:** Revenue recognition (ASC 606 / IFRS 15), lease accounting (IFRS 16), expense management, intercompany eliminations, provisions (IAS 37), financial instruments, bad debt, FX transactions, goodwill impairment.
+### 🚀 Current Projects
 
-**Out of scope by design:** Jurisdiction-specific tax rates, treasury/investment strategy, legal advice. These are handled with graceful refusal + redirect in the golden set (entries g019, g020).
+</div>
+
+| Project | What it does | Stack |
+|---------|-------------|-------|
+| [AI Engineering Capstone](https://github.com/TAlchemist/ai-engineering-capstone) | RAG pipeline for Finance & Revenue Policy Q&A. LLM-as-judge eval system with pairwise comparison + critic-creator loop | FastAPI · OpenAI · SQLite · ChromaDB |
+| **Project Atlas** | Personal life OS — finance, property, career, business. Fully automated with AI agents | Python · Power BI · SQLite · OpenAI |
+| **SAPSystems BI** | Client-facing Power BI dashboards wired to QuickBooks Online | Power BI · Python · QBO API |
 
 ---
 
-## Roadmap
+<div align="center">
 
-- [x] Module 1 — Evaluation infrastructure (golden set, judge, pairwise, critic-creator)
-- [ ] Module 2 — Retrieval (ChromaDB vector store, embedding pipeline, retriever)
-- [ ] Module 3 — RAG eval (re-run baseline with retrieval, compare scores)
-- [ ] Module 4 — UI (Streamlit or Gradio front-end)
+### 🐍 Contribution Graph
+
+<img src="https://raw.githubusercontent.com/TAlchemist/TAlchemist/output/github-contribution-grid-snake-dark.svg" alt="Snake animation" />
+
+</div>
+
+---
+
+<div align="center">
+
+### 📈 Activity
+
+[![Saptarshi's Activity Graph](https://github-readme-activity-graph.vercel.app/graph?username=TAlchemist&bg_color=0d1117&color=00D9FF&line=00D9FF&point=FFFFFF&hide_border=true)](https://github.com/TAlchemist)
+
+</div>
+
+---
+
+<div align="center">
+
+*"Data without context is noise. Context without action is waste."*
+
+![Profile views](https://komarev.com/ghpvc/?username=TAlchemist&color=00D9FF&style=flat-square)
+
+</div>
