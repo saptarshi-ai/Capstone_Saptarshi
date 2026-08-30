@@ -1,204 +1,103 @@
 """
-SQLite persistence layer for the cohort RAG pipeline.
-
-Tables
-------
-answers    — stores every /ask_batched response (W4 contract)
-eval_runs  — stores every LLM-judge evaluation result (W5 contract)
-
-Public API
-----------
-ensure_schema(db_path)          — idempotent: creates tables if not exist
-insert_answer(db_path, **fields) — log one /ask response
-insert_eval_run(db_path, **fields) — log one judge evaluation
-fetch_eval_runs(db_path, label) — return all eval rows for a given label
+SQLite Experiment Tracking.
+Logs every eval run and individual test case results to data/db/eval_runs.db.
 """
-
+from __future__ import annotations
+import csv
+import json
 import sqlite3
-from datetime import datetime, timezone
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
-_DDL_ANSWERS = """
-CREATE TABLE IF NOT EXISTS answers (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    question        TEXT    NOT NULL,
-    content         TEXT    NOT NULL,
-    model           TEXT    NOT NULL,
-    cost_usd        REAL    NOT NULL DEFAULT 0.0,
-    retries         INTEGER NOT NULL DEFAULT 0,
-    confidence      REAL,
-    sources         TEXT,           -- JSON array serialised as string
-    schema_version  TEXT    NOT NULL DEFAULT 'v1',
-    created_at      TEXT    NOT NULL
+_DDL = """
+CREATE TABLE IF NOT EXISTS runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  REAL,
+    config      TEXT,   -- JSON
+    notes       TEXT
 );
-"""
 
-_DDL_EVAL_RUNS = """
-CREATE TABLE IF NOT EXISTS eval_runs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    golden_id       TEXT    NOT NULL,
-    question        TEXT    NOT NULL,
-    candidate_answer TEXT   NOT NULL,
-    ideal_answer    TEXT    NOT NULL,
-    candidate_model TEXT    NOT NULL,
-    judge_model     TEXT    NOT NULL,
-    accuracy        INTEGER NOT NULL,
-    groundedness    INTEGER NOT NULL,
-    format          INTEGER NOT NULL,
-    reasoning       TEXT    NOT NULL,
-    eval_run_label  TEXT    NOT NULL,
-    created_at      TEXT    NOT NULL
+CREATE TABLE IF NOT EXISTS eval_cases (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER REFERENCES runs(id),
+    query_id    TEXT,
+    query       TEXT,
+    response    TEXT,
+    ideal       TEXT,
+    judge_score REAL,
+    latency_s   REAL,
+    extra       TEXT    -- JSON for any additional fields
 );
 """
 
 
-def _connect(db_path: str | Path) -> sqlite3.Connection:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    return conn
+class ExperimentTracker:
+    def __init__(self, db_path: str = "data/db/eval_runs.db"):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.executescript(_DDL)
+        self._conn.commit()
 
-
-def ensure_schema(db_path: str | Path) -> None:
-    """Idempotent. Creates tables if they don't exist."""
-    with _connect(db_path) as conn:
-        conn.execute(_DDL_ANSWERS)
-        conn.execute(_DDL_EVAL_RUNS)
-        conn.commit()
-    print(f"[store] schema OK → {db_path}")
-
-
-# ---------------------------------------------------------------------------
-# answers table
-# ---------------------------------------------------------------------------
-
-def insert_answer(
-    db_path: str | Path,
-    *,
-    question: str,
-    content: str,
-    model: str,
-    cost_usd: float = 0.0,
-    retries: int = 0,
-    confidence: float | None = None,
-    sources: str | None = None,
-    schema_version: str = "v1",
-) -> int:
-    """Insert one /ask response. Returns the new row id."""
-    created_at = datetime.now(timezone.utc).isoformat()
-    with _connect(db_path) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO answers
-              (question, content, model, cost_usd, retries, confidence, sources, schema_version, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (question, content, model, cost_usd, retries, confidence, sources, schema_version, created_at),
+    def log_run(self, config: Dict[str, Any], notes: str = "") -> int:
+        """Insert a new run record. Returns run_id."""
+        cur = self._conn.execute(
+            "INSERT INTO runs (created_at, config, notes) VALUES (?, ?, ?)",
+            (time.time(), json.dumps(config), notes),
         )
-        conn.commit()
+        self._conn.commit()
         return cur.lastrowid
 
-
-# ---------------------------------------------------------------------------
-# eval_runs table
-# ---------------------------------------------------------------------------
-
-def insert_eval_run(
-    db_path: str | Path,
-    *,
-    golden_id: str,
-    question: str,
-    candidate_answer: str,
-    ideal_answer: str,
-    candidate_model: str,
-    judge_model: str,
-    accuracy: int,
-    groundedness: int,
-    format: int,
-    reasoning: str,
-    eval_run_label: str,
-) -> int:
-    """Insert one judge evaluation result. Returns the new row id."""
-    created_at = datetime.now(timezone.utc).isoformat()
-    with _connect(db_path) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO eval_runs
-              (golden_id, question, candidate_answer, ideal_answer,
-               candidate_model, judge_model,
-               accuracy, groundedness, format, reasoning,
-               eval_run_label, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+    def log_evaluation_case(
+        self,
+        run_id: int,
+        query_id: str,
+        query: str,
+        response: str,
+        ideal: str,
+        judge_score: float,
+        latency_s: float = 0.0,
+        extra: Optional[Dict] = None,
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO eval_cases
+               (run_id, query_id, query, response, ideal, judge_score, latency_s, extra)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                golden_id, question, candidate_answer, ideal_answer,
-                candidate_model, judge_model,
-                accuracy, groundedness, format, reasoning,
-                eval_run_label, created_at,
+                run_id, query_id, query, response, ideal,
+                judge_score, latency_s, json.dumps(extra or {}),
             ),
         )
-        conn.commit()
-        return cur.lastrowid
+        self._conn.commit()
 
+    def get_run_summary(self, run_id: int) -> Dict[str, Any]:
+        cur = self._conn.execute(
+            """SELECT AVG(judge_score), AVG(latency_s), COUNT(*)
+               FROM eval_cases WHERE run_id = ?""",
+            (run_id,),
+        )
+        avg_score, avg_latency, count = cur.fetchone()
+        return {
+            "run_id": run_id,
+            "avg_judge_score": round(avg_score or 0, 3),
+            "avg_latency_s": round(avg_latency or 0, 3),
+            "case_count": count,
+        }
 
-def fetch_eval_runs(db_path: str | Path, eval_run_label: str) -> list[dict[str, Any]]:
-    """Return all rows for the given eval_run_label as dicts."""
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM eval_runs WHERE eval_run_label = ? ORDER BY id",
-            (eval_run_label,),
+    def export_to_csv(self, output_path: str = "data/db/eval_export.csv") -> str:
+        rows = self._conn.execute(
+            "SELECT * FROM eval_cases ORDER BY run_id, id"
         ).fetchall()
-    return [dict(r) for r in rows]
+        cols = [d[0] for d in self._conn.execute(
+            "SELECT * FROM eval_cases LIMIT 0"
+        ).description or []]
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(cols)
+            w.writerows(rows)
+        return output_path
 
-
-def summarise_eval_run(db_path: str | Path, eval_run_label: str) -> dict[str, Any]:
-    """Return avg scores and row count for a given label."""
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT
-                COUNT(*)        AS n,
-                AVG(accuracy)   AS avg_accuracy,
-                AVG(groundedness) AS avg_groundedness,
-                AVG(format)     AS avg_format,
-                AVG((accuracy + groundedness + format) / 3.0) AS avg_overall
-            FROM eval_runs
-            WHERE eval_run_label = ?
-            """,
-            (eval_run_label,),
-        ).fetchone()
-    return dict(row) if row else {}
-
-
-# ---------------------------------------------------------------------------
-# Quick smoke-test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import tempfile, os
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
-    ensure_schema(path)
-    rid = insert_eval_run(
-        path,
-        golden_id="g001",
-        question="Test question?",
-        candidate_answer="Test candidate.",
-        ideal_answer="Test ideal.",
-        candidate_model="gpt-4o-mini",
-        judge_model="gpt-4o",
-        accuracy=3, groundedness=3, format=3,
-        reasoning="acc: ok | grd: ok | fmt: ok",
-        eval_run_label="smoke-test",
-    )
-    print(f"inserted eval_run id={rid}")
-    summary = summarise_eval_run(path, "smoke-test")
-    print(f"summary: {summary}")
-    os.unlink(path)
-    print("smoke test passed")
+    def close(self):
+        self._conn.close()

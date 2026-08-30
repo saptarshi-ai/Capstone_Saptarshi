@@ -1,16 +1,7 @@
-# PowerShell script to install requirements (via pyproject.toml) using uv, and run Docker deployment.
-# Run via: .\bin\setup_env.ps1
-if (-Not (Test-Path ".env")) {
-    Write-Host "Creating .env from .env.example..."
-    Copy-Item ".env.example" -Destination ".env"
-}
-if (-Not (Test-Path ".venv")) {
-    Write-Host "Syncing project dependencies and creating uv.lock..."
-    uv sync
-} else {
-    Write-Host "Virtual environment already exists, skipping sync."
-}
-Write-Host "Activating virtual environment..."
-.\.venv\Scripts\Activate.ps1
-Write-Host "Starting Docker deployment..."
-docker-compose up -d --build
+# PowerShell — Windows setup
+Write-Host "Setting up RAG pipeline environment..."
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install fastapi uvicorn[standard] streamlit openai chromadb pydantic pydantic-settings python-dotenv requests pandas httpx
+Write-Host "Done. Add your OPENAI_API_KEY to .env then run bin\run_app.ps1"

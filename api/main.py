@@ -1,187 +1,112 @@
 """
-W4 FastAPI cohort repo — Finance & Revenue Policy RAG pipeline.
+FastAPI RAG Backend.
+Endpoints:
+  GET  /health          — liveness check
+  POST /upload          — ingest documents into ChromaDB
+  POST /query           — ask a question, get a grounded answer + sources
+  GET  /metrics         — latest eval run summary
 
-Endpoints
----------
-GET  /health          — liveness check
-POST /ask             — single question → structured Answer (streaming)
-POST /ask_batched     — same, but waits for full response + logs to SQLite
-
-Answer model (schema_version='v1')
------------------------------------
-content        str   — the generated answer text
-cost_usd       float — estimated API cost in USD
-retries        int   — number of retry attempts (0 = first try succeeded)
-confidence     float — self-reported confidence 0.0–1.0
-sources        list  — retrieved source references (list of strings)
-schema_version str   — 'v1' (for stable API contract)
-
-Run with
---------
-  uvicorn api.main:app --reload --port 8000
+Run: uvicorn api.main:app --reload --port 8000
 """
-
-import os
-import sys
+from __future__ import annotations
 import time
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Optional
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
-
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from openai import OpenAI
 
-from config.settings import Settings
-from src.pipeline.store import ensure_schema, insert_answer
-
-settings = Settings()
-
-DB_PATH = ROOT / "data" / "answers.db"
-ensure_schema(DB_PATH)
+from src.schemas.api import QueryRequest, QueryResponse, UploadResponse
+from src.rag.chunking import chunk_by_characters
+from src.rag.embeddings import get_default_embedder
+from src.rag.vector_store import ChromaDBStore
+from src.rag.retriever import DenseRetriever
+from src.rag.generator import LLMGenerator
+from src.pipeline.store import ExperimentTracker
 
 app = FastAPI(
-    title="Finance & Revenue Policy RAG API",
-    version="v1",
-    description="W4 cohort repo — structured outputs, cost tracking, SQLite persistence",
+    title="Basecamp Handbook RAG API",
+    description="Grounded Q&A over the 37signals Employee Handbook.",
+    version="0.1.0",
 )
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+# ── Singletons (initialised once on startup) ──────────────────────────────────
+_embedder = get_default_embedder()
+_vector_store = ChromaDBStore(collection_name="capstone_rag", persist_dir="data/db")
+_retriever = DenseRetriever(vector_store=_vector_store, embedder=_embedder)
+_generator = LLMGenerator(model="gpt-4o")
+_tracker = ExperimentTracker(db_path="data/db/eval_runs.db")
 
-class AskRequest(BaseModel):
-    question: str = Field(..., description="The question to answer")
-    model: str = Field(default="gpt-4o-mini", description="LLM model to use")
+# Track latency samples for /metrics
+_latency_samples: list[float] = []
 
-
-class Answer(BaseModel):
-    content: str
-    cost_usd: float = 0.0
-    retries: int = 0
-    confidence: float | None = None
-    sources: list[str] = []
-    schema_version: str = "v1"
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT = (
-    "You are a Corporate Finance and Revenue Policy assistant. "
-    "Answer based on standard accounting principles (IFRS/GAAP/ASC). "
-    "Be clear and concise. "
-    "If the question is outside finance/accounting policy scope, "
-    "say so politely and redirect to the appropriate team. "
-    "Do not invent specific dollar thresholds or jurisdiction-specific tax rates."
-)
-
-def _get_client() -> OpenAI:
-    return OpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
-
-
-def _estimate_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
-    """Very rough cost estimate. Update rates as needed."""
-    rates = {
-        "gpt-4o":      (0.005, 0.015),   # per 1K tokens (in, out)
-        "gpt-4o-mini": (0.00015, 0.0006),
-    }
-    in_rate, out_rate = rates.get(model, (0.001, 0.002))
-    return round(
-        (prompt_tokens / 1000) * in_rate + (completion_tokens / 1000) * out_rate,
-        6,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "schema_version": "v1"}
+def health_check():
+    return {
+        "status": "ok",
+        "indexed_chunks": _vector_store.count(),
+    }
 
 
-@app.post("/ask")
-def ask(req: AskRequest) -> Answer:
+@app.post("/upload", response_model=UploadResponse)
+async def upload_document(file: UploadFile = File(...)):
     """
-    Synchronous single-question endpoint.
-    Returns a structured Answer and logs the result to SQLite.
+    Upload a .txt or .md file and index its chunks into ChromaDB.
+    Chunks are embedded with text-embedding-3-small and stored.
     """
-    client = _get_client()
-    retries = 0
-    max_retries = 2
+    if not file.filename.endswith((".txt", ".md")):
+        raise HTTPException(400, "Only .txt and .md files supported.")
 
-    while True:
-        try:
-            resp = client.chat.completions.create(
-                model=req.model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": req.question},
-                ],
-                temperature=0.0,
-                max_tokens=600,
-            )
-            break
-        except Exception as exc:
-            retries += 1
-            if retries > max_retries:
-                raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
-            time.sleep(1)
+    content = (await file.read()).decode("utf-8", errors="replace")
+    chunks = chunk_by_characters(content, chunk_size=500, overlap=50)
+    if not chunks:
+        raise HTTPException(400, "File is empty or produced no chunks.")
 
-    content = resp.choices[0].message.content.strip()
-    usage = resp.usage
-    cost = _estimate_cost(usage.prompt_tokens, usage.completion_tokens, req.model)
+    embeddings = _embedder.get_embeddings_batch(chunks)
+    metadata = [{"source": file.filename, "chunk_index": i} for i in range(len(chunks))]
+    _vector_store.add_documents(chunks, embeddings, metadata=metadata)
 
-    # Persist to SQLite
-    insert_answer(
-        DB_PATH,
-        question=req.question,
-        content=content,
-        model=req.model,
-        cost_usd=cost,
-        retries=retries,
-        sources=None,
-        schema_version="v1",
-    )
-
-    return Answer(
-        content=content,
-        cost_usd=cost,
-        retries=retries,
-        sources=[],
-        schema_version="v1",
+    return UploadResponse(
+        status="indexed",
+        filename=file.filename,
+        chunks_added=len(chunks),
     )
 
 
-@app.post("/ask_batched")
-def ask_batched(req: AskRequest) -> Answer:
+@app.post("/query", response_model=QueryResponse)
+def query(req: QueryRequest):
     """
-    Batched variant — identical contract to /ask.
-    In a full RAG system this would call the retrieval pipeline first.
-    For W4/W5 it delegates to the same LLM call.
+    Answer a question using the RAG pipeline.
+    1. Retrieve top_k relevant chunks from ChromaDB.
+    2. Generate a grounded answer with GPT-4o.
     """
-    return ask(req)
+    if _vector_store.count() == 0:
+        raise HTTPException(503, "No documents indexed yet. POST /upload first.")
+
+    t0 = time.perf_counter()
+    retrieved = _retriever.retrieve(req.query, top_k=req.top_k or 5)
+    result = _generator.generate_answer(req.query, retrieved)
+    latency = round(time.perf_counter() - t0, 3)
+    _latency_samples.append(latency)
+
+    return QueryResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+    )
 
 
 @app.get("/metrics")
-def metrics() -> dict:
-    """Return basic operational metrics (stubbed — extend in W6+)."""
-    import sqlite3
-    try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as n, AVG(cost_usd) as avg_cost FROM answers"
-            ).fetchone()
-        return {
-            "total_answers": row[0],
-            "avg_cost_usd": round(row[1] or 0, 6),
-            "schema_version": "v1",
-        }
-    except Exception as exc:
-        return {"error": str(exc)}
+def metrics():
+    """Returns latency stats and index size."""
+    if not _latency_samples:
+        return {"message": "No queries yet."}
+    sorted_lat = sorted(_latency_samples)
+    n = len(sorted_lat)
+    return {
+        "total_queries": n,
+        "latency_mean_s": round(sum(sorted_lat) / n, 3),
+        "latency_p50_s": round(sorted_lat[n // 2], 3),
+        "latency_p95_s": round(sorted_lat[int(n * 0.95)], 3),
+        "indexed_chunks": _vector_store.count(),
+    }

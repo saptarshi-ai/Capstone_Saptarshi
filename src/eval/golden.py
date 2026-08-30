@@ -1,103 +1,108 @@
 """
-Golden set loader for the Finance & Revenue Policy Q&A capstone.
-
-Each line in the JSONL file must have:
-  id           str  — unique identifier, e.g. "g001"
-  question     str  — the question posed to the RAG assistant
-  ideal_answer str  — the ground-truth answer
-  notes        str  — starts with bucket prefix: "happy-path.", "harder.", "edge."
-
-Public API
-----------
-load_golden_set(path)  — returns list of dicts
-iter_golden_set(path)  — generator version
+Golden Set Evaluation.
+Loads the JSONL benchmark, runs the RAG pipeline, scores with the judge.
 """
-
+from __future__ import annotations
 import json
+import time
 from pathlib import Path
-from typing import Generator
+from typing import Any, Callable, Dict, List
 
-DEFAULT_PATH = Path(__file__).parent.parent.parent / "data" / "golden_set.jsonl"
-
-REQUIRED_FIELDS = {"id", "question", "ideal_answer", "notes"}
-VALID_BUCKETS = {"happy-path", "harder", "edge"}
+from src.eval.judge import LLMJudge
 
 
-def _parse_bucket(notes: str) -> str:
-    """Extract the bucket prefix from the notes field."""
-    prefix = notes.split(".")[0].strip()
-    return prefix if prefix in VALID_BUCKETS else "unknown"
-
-
-def load_golden_set(path: str | Path = DEFAULT_PATH) -> list[dict]:
+def load_golden_set(filepath: str = "data/golden_set.jsonl") -> List[Dict[str, Any]]:
     """
-    Load all entries from the golden set JSONL file.
-
-    Returns a list of dicts; each dict has the original fields plus
-    a derived 'bucket' key ('happy-path', 'harder', or 'edge').
+    Parses the JSONL golden set.
+    Each line: {id, question, ideal_answer, notes, level}
     """
-    path = Path(path)
+    path = Path(filepath)
     if not path.exists():
-        raise FileNotFoundError(f"Golden set not found: {path}")
-
-    entries = []
-    with open(path, encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Invalid JSON on line {lineno}: {exc}") from exc
-
-            missing = REQUIRED_FIELDS - entry.keys()
-            if missing:
-                raise ValueError(f"Line {lineno} missing fields: {missing}")
-
-            entry["bucket"] = _parse_bucket(entry["notes"])
-            entries.append(entry)
-
-    return entries
+        raise FileNotFoundError(f"Golden set not found: {filepath}")
+    rows = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("//"):
+            rows.append(json.loads(line))
+    return rows
 
 
-def iter_golden_set(path: str | Path = DEFAULT_PATH) -> Generator[dict, None, None]:
-    """Generator version — avoids loading everything into memory at once."""
-    for entry in load_golden_set(path):
-        yield entry
-
-
-def describe_golden_set(path: str | Path = DEFAULT_PATH) -> dict:
-    """Print a short summary of the golden set composition."""
-    entries = load_golden_set(path)
-    from collections import Counter
-    buckets = Counter(e["bucket"] for e in entries)
-    return {
-        "total": len(entries),
-        "by_bucket": dict(buckets),
-        "ids": [e["id"] for e in entries],
-    }
-
-
-def validate_golden_set(path: str | Path = DEFAULT_PATH) -> dict:
+def run_evaluation(
+    golden_dataset: List[Dict[str, Any]],
+    rag_pipeline: Callable[[str], Dict[str, Any]],
+    judge: LLMJudge | None = None,
+    verbose: bool = True,
+) -> List[Dict[str, Any]]:
     """
-    Validate the golden set and return a summary.
-    Raises ValueError if any entry is malformed.
+    Runs full benchmark against golden set.
+    
+    Args:
+        golden_dataset: Output of load_golden_set().
+        rag_pipeline: Callable that takes query str and returns
+                      {answer: str, sources: List[str], context: str}.
+        judge: LLMJudge instance. Defaults to new LLMJudge().
+    Returns:
+        List of result dicts with scores per case.
     """
-    entries = load_golden_set(path)
-    from collections import Counter
-    buckets = Counter(e["bucket"] for e in entries)
-    summary = {
-        "path": str(path),
-        "n": len(entries),
-        "coverage": dict(buckets),
-        "ids": [e["id"] for e in entries],
-        "valid": True,
+    if judge is None:
+        judge = LLMJudge()
+
+    results = []
+    for case in golden_dataset:
+        qid = case["id"]
+        query = case["question"]
+        ideal = case.get("ideal_answer", "")
+
+        t0 = time.perf_counter()
+        pipeline_out = rag_pipeline(query)
+        latency = time.perf_counter() - t0
+
+        answer = pipeline_out.get("answer", "")
+        context = pipeline_out.get("context", "\n".join(pipeline_out.get("sources", [])))
+
+        scores = judge.evaluate(
+            query=query,
+            context=context,
+            generated_answer=answer,
+            expected_answer=ideal,
+        )
+
+        result = {
+            "id": qid,
+            "level": case.get("level", "unknown"),
+            "query": query,
+            "ideal": ideal,
+            "answer": answer,
+            "latency_s": round(latency, 3),
+            **scores,
+        }
+        results.append(result)
+
+        if verbose:
+            print(f"  [{qid}] faithfulness={scores['faithfulness']:.2f} relevance={scores['relevance']:.2f} latency={latency:.2f}s")
+
+    return results
+
+
+def aggregate_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Computes average faithfulness, relevance, composite, latency.
+    Also breaks down by level (happy_path / hard_path / edge_path).
+    """
+    if not results:
+        return {}
+    n = len(results)
+    agg = {
+        "n": n,
+        "faithfulness_mean": round(sum(r["faithfulness"] for r in results) / n, 3),
+        "relevance_mean": round(sum(r["relevance"] for r in results) / n, 3),
+        "composite_mean": round(sum(r["composite"] for r in results) / n, 3),
+        "latency_mean_s": round(sum(r["latency_s"] for r in results) / n, 3),
+        "latency_p95_s": round(sorted(r["latency_s"] for r in results)[int(n * 0.95)], 3),
     }
-    return summary
-
-
-if __name__ == "__main__":
-    import pprint
-    summary = validate_golden_set()
-    pprint.pprint(summary)
+    # Per-level breakdown
+    levels = {r["level"] for r in results}
+    for lvl in levels:
+        subset = [r for r in results if r["level"] == lvl]
+        agg[f"faithfulness_{lvl}"] = round(sum(r["faithfulness"] for r in subset) / len(subset), 3)
+    return agg

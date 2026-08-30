@@ -1,126 +1,154 @@
-<div align="center">
+# Capstone: Basecamp Handbook RAG Pipeline
 
-<!-- Animated header -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&pause=1000&color=00D9FF&center=true&vCenter=true&width=600&lines=Hi+%F0%9F%91%8B%2C+I'm+Saptarshi;Data+Engineer+%7C+BI+Developer;Building+AI+%2B+Data+Systems;7%2B+years+in+the+trenches" alt="Typing SVG" />
-
-<br/>
-
-<!-- Subtitle -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=16&pause=2000&color=888888&center=true&vCenter=true&width=600&lines=Australia+%F0%9F%87%A6%F0%9F%87%BA+%7C+Sydney;Finance+%2B+AI+%2B+Automation;Currently%3A+IIT+Madras+AI+Engineering+Programme" alt="Subtitle" />
-
-<br/><br/>
-
-<!-- Social badges -->
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/saptarshi-sengupta)
-[![GitHub followers](https://img.shields.io/github/followers/TAlchemist?style=for-the-badge&color=00D9FF&labelColor=0d1117)](https://github.com/TAlchemist)
-
-</div>
+**Author:** Saptarshi Sengupta  
+**Programme:** AI Engineering — IITMP  
+**Corpus:** 37signals Employee Handbook (Basecamp)
 
 ---
 
-<div align="center">
+## What this does
 
-### ⚡ What I'm building
+RAG-powered Q&A assistant. Employees ask natural-language questions about company policies and receive grounded, cited answers from the handbook — no hallucination allowed.
 
-</div>
+---
 
-```python
-saptarshi = {
-    "currently_learning": ["RAG pipelines", "LLM evaluation", "AI Engineering"],
-    "building":           ["Finance AI assistant (RAG + FastAPI)", "Personal life OS"],
-    "stack":              ["Python", "SQL", "Power BI", "FastAPI", "dbt", "Azure"],
-    "domain":             ["Data Engineering", "BI", "Finance Automation"],
-    "goal":               "Turn 7 years of data work into AI-powered systems"
-}
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+# Windows
+bin\setup_env.ps1
+
+# Mac/Linux
+bash bin/setup_env.sh
+```
+
+### 2. Add your API key
+
+```bash
+# Edit .env
+OPENAI_API_KEY=sk-your-key-here
+```
+
+### 3. Index the handbook + run eval
+
+```bash
+python scripts/run_rag_eval.py
+```
+
+### 4. Launch the app
+
+```bash
+# Windows
+bin\run_app.ps1
+
+# Mac/Linux
+bash bin/run_app.sh
+```
+
+Then open http://localhost:8501 in your browser.
+
+---
+
+## Architecture
+
+```
+User (Browser)
+     │
+     ▼
+Streamlit UI  (ui/app.py) ─── POST /query ──► FastAPI  (api/main.py)
+                                                    │
+                              ┌─────────────────────┼───────────────────────┐
+                              ▼                     ▼                       ▼
+                      Embeddings            Retriever                 Generator
+                 (src/rag/embeddings)   (src/rag/retriever)     (src/rag/generator)
+                   text-embedding-         DenseRetriever            GPT-4o
+                     3-small               [PLACEHOLDER:          grounded prompt
+                                          HybridRetriever]
+                              │
+                              ▼
+                         ChromaDB
+                    (src/rag/vector_store)
+                      data/db/ (persisted)
 ```
 
 ---
 
-<div align="center">
+## KPIs (from ADR 0001)
 
-### 🛠 Tech Stack
+| KPI | Target | Measured by |
+|-----|--------|-------------|
+| Faithfulness | ≥ 0.85 | LLM-as-judge (src/eval/judge.py) |
+| Answer Relevance | ≥ 0.80 | Cosine sim: answer vs query embedding |
+| Latency p95 | ≤ 4.0s | GET /metrics |
 
-**Languages & Frameworks**
-
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Bash](https://img.shields.io/badge/Bash-121011?style=for-the-badge&logo=gnu-bash&logoColor=white)
-
-**Data & AI**
-
-![Power BI](https://img.shields.io/badge/Power_BI-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
-![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
-![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
-
-**Cloud & Tools**
-
-![Azure](https://img.shields.io/badge/Azure-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)
-![Git](https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![VS Code](https://img.shields.io/badge/VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)
-
-</div>
+Run baseline: `python scripts/run_eval.py`
 
 ---
 
-<div align="center">
+## File Map
 
-### 📊 GitHub Stats
+```
+src/
+  rag/
+    chunking.py         ✅ fixed-size + sliding window
+    embeddings.py       ✅ OpenAI text-embedding-3-small
+    vector_store.py     ✅ ChromaDB | 🔲 PineconeStore (placeholder)
+    retriever.py        ✅ DenseRetriever | 🔲 HybridRetriever (placeholder — post W6 Day 4)
+    generator.py        ✅ GPT-4o grounded generation + streaming
+    prompts/
+      system_prompt.txt ✅ HR policy assistant (fixed: was "financial assistant")
+      user_prompt.txt   ✅ context injection template
+  eval/
+    judge.py            ✅ LLMJudge (faithfulness + relevance, 0-1)
+    golden.py           ✅ golden set loader + run_evaluation + aggregate_metrics
+    pairwise.py         ✅ position-debiased A/B comparison
+    critic_creator.py   ✅ two-agent refinement loop
+  pipeline/
+    store.py            ✅ SQLite experiment tracker
+  schemas/
+    api.py              ✅ QueryRequest / QueryResponse / UploadResponse
+    rag.py              ✅ DocumentChunk / RetrievalResult
 
-<img height="180em" src="https://github-readme-stats.vercel.app/api?username=TAlchemist&show_icons=true&theme=tokyonight&include_all_commits=true&count_private=true&hide_border=true&bg_color=0d1117&title_color=00D9FF&icon_color=00D9FF&text_color=c9d1d9"/>
+api/main.py             ✅ /health /upload /query /metrics
+ui/app.py               ✅ Streamlit chat + file upload + sidebar
+config/
+  settings.py           ✅ pydantic-settings from .env
+  logging_config.py     ✅ standardised logging
 
-<img height="180em" src="https://github-readme-stats.vercel.app/api/top-langs/?username=TAlchemist&layout=compact&langs_count=6&theme=tokyonight&hide_border=true&bg_color=0d1117&title_color=00D9FF&text_color=c9d1d9"/>
+data/
+  golden_set.jsonl      ✅ 5 test cases (g001-g005)
+  temp/basecamp_handbook.md  ✅ corpus (pre-downloaded)
 
-</div>
+scripts/
+  run_rag_eval.py       ✅ ingest + eval in one shot
+  run_eval.py           ✅ eval only (assumes already indexed)
+  run_pairwise.py       ✅ A/B comparison
+  run_critic_creator.py ✅ red-team agent loop
 
-<div align="center">
-
-<img src="https://github-readme-streak-stats.herokuapp.com/?user=TAlchemist&theme=tokyonight&hide_border=true&background=0d1117&stroke=00D9FF&ring=00D9FF&fire=FF6B6B&currStreakLabel=00D9FF" alt="streak stats"/>
-
-</div>
-
----
-
-<div align="center">
-
-### 🚀 Current Projects
-
-</div>
-
-| Project | What it does | Stack |
-|---------|-------------|-------|
-| [AI Engineering Capstone](https://github.com/TAlchemist/ai-engineering-capstone) | RAG pipeline for Finance & Revenue Policy Q&A. LLM-as-judge eval system with pairwise comparison + critic-creator loop | FastAPI · OpenAI · SQLite · ChromaDB |
-| **Project Atlas** | Personal life OS — finance, property, career, business. Fully automated with AI agents | Python · Power BI · SQLite · OpenAI |
-| **SAPSystems BI** | Client-facing Power BI dashboards wired to QuickBooks Online | Power BI · Python · QBO API |
-
----
-
-<div align="center">
-
-### 🐍 Contribution Graph
-
-<img src="https://raw.githubusercontent.com/TAlchemist/TAlchemist/output/github-contribution-grid-snake-dark.svg" alt="Snake animation" />
-
-</div>
-
----
-
-<div align="center">
-
-### 📈 Activity
-
-[![Saptarshi's Activity Graph](https://github-readme-activity-graph.vercel.app/graph?username=TAlchemist&bg_color=0d1117&color=00D9FF&line=00D9FF&point=FFFFFF&hide_border=true)](https://github.com/TAlchemist)
-
-</div>
+docs/
+  adr/0001-capstone-framing.md  ✅ locked architecture
+  dr/dr1-summary-template.md    ✅ fill after baseline eval
+```
 
 ---
 
-<div align="center">
+## Placeholders (fill after W6 Day 4+)
 
-*"Data without context is noise. Context without action is waste."*
+| File | What's missing |
+|------|---------------|
+| `src/rag/retriever.py` → `HybridRetriever` | BM25 + dense fusion; needs `rank_bm25` |
+| `src/rag/vector_store.py` → `PineconeStore` | Cloud vector DB; needs `pinecone-client` |
+| `ui/app.py` | Streaming token display (token-by-token) — uses `generate_stream()` in generator |
 
-![Profile views](https://komarev.com/ghpvc/?username=TAlchemist&color=00D9FF&style=flat-square)
+---
 
-</div>
+## Commit convention
+
+```
+feat(rag): implement HybridRetriever with BM25
+fix(eval): handle null score in aggregate_metrics
+docs(dr1): populate baseline eval scores
+eval(golden): add g006-g010 edge cases
+```

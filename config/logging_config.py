@@ -1,9 +1,16 @@
-"""
-Standardized Logging Configuration.
-Sets up JSON or standard formatting for logs across the entire RAG pipeline.
-Ensures that errors, warnings, and evaluation metrics are properly piped to standard out
-or log files for production monitoring.
+"""Standardized logging for the RAG application."""
+import logging
+import sys
 
-Functions:
-- setup_logger(name): Returns a pre-configured Python logger instance.
-"""
+
+def setup_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
