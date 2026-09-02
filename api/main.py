@@ -10,11 +10,8 @@ Run: uvicorn api.main:app --reload --port 8000
 """
 from __future__ import annotations
 import time
-from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import StreamingResponse
 
 from src.schemas.api import QueryRequest, QueryResponse, UploadResponse
 from src.rag.chunking import chunk_by_characters
