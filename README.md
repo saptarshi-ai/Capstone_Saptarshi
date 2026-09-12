@@ -63,14 +63,14 @@ Streamlit UI  (ui/app.py) ─── POST /query ──► FastAPI  (api/main.py)
                               ▼                     ▼                       ▼
                       Embeddings            Retriever                 Generator
                  (src/rag/embeddings)   (src/rag/retriever)     (src/rag/generator)
-                   text-embedding-         DenseRetriever            GPT-4o
-                     3-small               [PLACEHOLDER:          grounded prompt
-                                          HybridRetriever]
+                   OpenAI / HuggingFace   DenseRetriever            GPT-4o
+                                         [PLACEHOLDER:          grounded prompt
+                                         HybridRetriever]
                               │
                               ▼
-                         ChromaDB
-                    (src/rag/vector_store)
-                      data/db/ (persisted)
+                     Vector Store (configurable)
+                 ChromaDB (local) | Pinecone (cloud) | Qdrant (Docker/cloud)
+                      (src/rag/vector_store)
 ```
 
 ---
@@ -92,13 +92,16 @@ Run baseline: `python scripts/run_eval.py`
 ```
 src/
   rag/
-    chunking.py         ✅ fixed-size + sliding window
-    embeddings.py       ✅ OpenAI text-embedding-3-small
-    vector_store.py     ✅ ChromaDB | 🔲 PineconeStore (placeholder)
+    document_loader.py  ✅ TextLoader | MarkdownLoader | DocxLoader | DocLoader
+                           PDFLoader (pdfplumber/pypdf) | PDFOcrLoader (pytesseract)
+    chunking.py         ✅ SlidingWindowChunker | SectionChunking | SemanticChunker
+    embeddings.py       ✅ OpenAIEmbeddings | HuggingFaceEmbeddings (sentence-transformers)
+    vector_store.py     ✅ ChromaDBStore (local) | PineconeStore (cloud) | QdrantStore (Docker/cloud)
+                           VectorStoreFactory — set VECTOR_STORE_BACKEND in .env
     retriever.py        ✅ DenseRetriever | 🔲 HybridRetriever (placeholder — post W6 Day 4)
     generator.py        ✅ GPT-4o grounded generation + streaming
     prompts/
-      system_prompt.txt ✅ HR policy assistant (fixed: was "financial assistant")
+      system_prompt.txt ✅ HR policy assistant
       user_prompt.txt   ✅ context injection template
   eval/
     judge.py            ✅ LLMJudge (faithfulness + relevance, 0-1)
@@ -134,13 +137,31 @@ docs/
 
 ---
 
-## Placeholders (fill after W6 Day 4+)
+## Vector Store Configuration
+
+Set `VECTOR_STORE_BACKEND` in `.env` to switch:
+
+| Value | Store | Use when |
+|-------|-------|----------|
+| `chroma` (default) | ChromaDB local | Dev / POC — no infra needed |
+| `qdrant` | Qdrant Docker | Local testing with prod-like perf |
+| `pinecone` | Pinecone cloud | Prod / scale (10M+ vectors) |
+
+**Qdrant quick start:**
+```bash
+docker run -p 6333:6333 qdrant/qdrant
+# .env: VECTOR_STORE_BACKEND=qdrant  QDRANT_URL=http://localhost:6333
+```
+
+**Pinecone:** set `PINECONE_API_KEY` + `PINECONE_INDEX_NAME` in `.env` (create index first in console).
+
+---
+
+## Remaining Placeholder
 
 | File | What's missing |
 |------|---------------|
 | `src/rag/retriever.py` → `HybridRetriever` | BM25 + dense fusion; needs `rank_bm25` |
-| `src/rag/vector_store.py` → `PineconeStore` | Cloud vector DB; needs `pinecone-client` |
-| `ui/app.py` | Streaming token display (token-by-token) — uses `generate_stream()` in generator |
 
 ---
 
