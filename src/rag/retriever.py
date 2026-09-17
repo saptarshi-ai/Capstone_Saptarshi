@@ -1,70 +1,105 @@
 """
 Core Retrieval Logic.
-DenseRetriever: top-k cosine similarity via ChromaDB.
-HybridRetriever: PLACEHOLDER — dense + BM25 sparse search (post W6 Day 4).
+This module is responsible for taking a user query, embedding it, and fetching the most
+relevant document chunks from the vector store.
 """
-from __future__ import annotations
-from typing import List, Dict, Any
 
-from src.rag.embeddings import BaseEmbeddingModel, get_default_embedder
-from src.rag.vector_store import ChromaDBStore, VectorStore
+from abc import ABC, abstractmethod
+
+from config.logging_config import setup_logger
+from config.settings import settings
+from rag.embeddings import ModelSelector
+from rag.generator import LLMGenerator
+from rag.prompts.prompts import build_multi_query_prompt, build_query_decomposition_prompt
+from rag.vector_store import BaseVectorStore
+
+logger = setup_logger(__name__)
 
 
-class BaseRetriever:
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        raise NotImplementedError
+class BaseRetriever(ABC):
+    @abstractmethod
+    async def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
+        pass
 
 
 class DenseRetriever(BaseRetriever):
-    """
-    Standard dense vector similarity search.
-    Embeds the query with the same model used for documents,
-    queries ChromaDB, returns top_k chunks sorted by cosine similarity.
-    """
-    def __init__(
-        self,
-        vector_store: VectorStore | None = None,
-        embedder: BaseEmbeddingModel | None = None,
-    ):
-        self.store = vector_store or ChromaDBStore()
-        self.embedder = embedder or get_default_embedder()
+    def __init__(self, vector_store: BaseVectorStore, reranker=None):
+        self.vector_store = vector_store
+        self.reranker = reranker
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """
-        Args:
-            query: Natural language question from the user.
-            top_k: Number of chunks to return.
-        Returns:
-            List of dicts: {text, metadata, score}
-        """
-        query_embedding = self.embedder.get_embedding(query)
-        results = self.store.search(query_embedding, top_k=top_k)
-        return results
+    async def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
+        logger.info(f"Retrieving results for query: '{query}'")
+        try:
+            # If using a reranker, fetch a larger pool initially
+            fetch_k = top_k * 4 if self.reranker else top_k
 
+            queries_to_embed = [query]
+            
+            if getattr(settings, "USE_MULTI_QUERY", False) or getattr(settings, "USE_QUERY_DECOMPOSITION", False):
+                llm = LLMGenerator()
+                augmented_queries = []
+                
+                if getattr(settings, "USE_MULTI_QUERY", False):
+                    logger.info("Generating multi-queries")
+                    prompt = build_multi_query_prompt(query)
+                    res = await llm.generate_text(prompt)
+                    augmented_queries.extend([q.strip() for q in res.split('\n') if q.strip()])
+                    
+                if getattr(settings, "USE_QUERY_DECOMPOSITION", False):
+                    logger.info("Generating decomposed queries")
+                    prompt = build_query_decomposition_prompt(query)
+                    res = await llm.generate_text(prompt)
+                    augmented_queries.extend([q.strip() for q in res.split('\n') if q.strip()])
+                
+                # Add augmented queries, avoiding duplicates
+                for q in augmented_queries:
+                    if q and q not in queries_to_embed:
+                        queries_to_embed.append(q)
+                
+                logger.info(f"Total queries to embed: {len(queries_to_embed)}")
 
-class HybridRetriever(BaseRetriever):
-    """
-    PLACEHOLDER — Hybrid search: dense (ChromaDB) + sparse (BM25).
-    
-    TODO after W6 Day 4 (Advanced Retrieval):
-    1. pip install rank_bm25
-    2. Build BM25 index from corpus chunks
-    3. Combine dense score + BM25 score (weighted: alpha*dense + (1-alpha)*bm25)
-    4. Optional: add cross-encoder re-ranking for final top_k
-    
-    Stub: falls back to DenseRetriever until implemented.
-    """
-    def __init__(
-        self,
-        vector_store: VectorStore | None = None,
-        embedder: BaseEmbeddingModel | None = None,
-        alpha: float = 0.7,  # weight for dense vs sparse
-    ):
-        self._dense = DenseRetriever(vector_store=vector_store, embedder=embedder)
-        self.alpha = alpha
-        # PLACEHOLDER: self._bm25 = BM25Retriever(corpus_chunks)
+            all_results = []
+            seen_chunks = set()
+            
+            for q in queries_to_embed:
+                query_embedding = await ModelSelector.get_single_embedding(q)
+                
+                sparse_embedding = None
+                if getattr(settings, "USE_HYBRID_SEARCH", False):
+                    try:
+                        sparse_obj = ModelSelector.get_single_sparse_embedding(q)
+                        if sparse_obj:
+                            sparse_embedding = {
+                                "indices": sparse_obj.indices.tolist(),
+                                "values": sparse_obj.values.tolist()
+                            }
+                    except Exception as e:
+                        logger.warning(f"Failed to generate sparse query embedding: {e}")
+                
+                results = self.vector_store.search(
+                    query_embedding, 
+                    top_k=fetch_k, 
+                    sparse_embedding=sparse_embedding
+                )
+                
+                for r in results:
+                    chunk_text = r.get("chunk", str(r))
+                    if chunk_text not in seen_chunks:
+                        seen_chunks.add(chunk_text)
+                        all_results.append(r)
+            
+            logger.info(f"Initial retrieval fetched {len(all_results)} unique results across all queries")
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        # TODO: merge dense + BM25 scores, re-rank
-        # For now: delegate to dense only
-        return self._dense.retrieve(query, top_k=top_k)
+            # Apply reranker if configured
+            if self.reranker and all_results:
+                logger.info(f"Applying reranker to refine top {top_k} results")
+                all_results = self.reranker.rerank(query, all_results, top_k=top_k)
+                logger.info(f"Reranking complete. Final results: {len(all_results)}")
+            elif all_results and len(all_results) > top_k:
+                # If no reranker, just take the first top_k
+                all_results = all_results[:top_k]
+
+            return all_results
+        except Exception as e:
+            logger.error(f"Failed to retrieve results: {e}")
+            raise

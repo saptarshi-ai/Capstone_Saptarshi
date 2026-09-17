@@ -1,391 +1,396 @@
 """
 Vector Database Interface.
-Author: Saptarshi Sengupta
+This script manages the connection and interactions with the underlying vector database
+(such as ChromaDB, FAISS, Qdrant, or Pinecone).
+It provides standard methods for initializing the database, inserting document chunks and
+their corresponding embeddings, deleting old records, and persisting the index to disk.
+This abstraction ensures the core RAG logic remains decoupled from specific database vendors.
 
-Provides ChromaDB (local persistent), Pinecone (cloud), and Qdrant (local/cloud)
-vector stores behind a common VectorStore ABC.  Switch backends via VectorStoreFactory.
+Classes:
+- BaseVectorStore: Abstract interface for vector databases.
+- JSONVectorStore: Implementation using a simple JSON file.
+- ChromaDBStore: Implementation using local ChromaDB.
+- PineconeStore: Implementation using Pinecone cloud vector DB.
+- QdrantStore: Implementation using Qdrant vector DB.
+- VectorStoreFactory: Factory to initialize the configured vector store.
 
-Dependencies:
-    ChromaDB : pip install chromadb
-    Pinecone : pip install pinecone-client
-    Qdrant   : pip install qdrant-client
+Methods:
+- add_document(filename, file_type, chunks, embeddings): Inserts records.
+- search(query_embedding, top_k): Searches for relevant chunks.
 """
-from __future__ import annotations
 
+import json
+import math
 import os
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from config.settings import settings
 
-
-# ── Abstract Base ─────────────────────────────────────────────────────────────
-
-class VectorStore(ABC):
+class BaseVectorStore(ABC):
     @abstractmethod
-    def add_documents(
-        self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
-    ) -> None: ...
-
-    @abstractmethod
-    def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]: ...
-
-    @abstractmethod
-    def delete(self, document_ids: List[str]) -> None: ...
-
-    @abstractmethod
-    def count(self) -> int: ...
-
-
-# ── ChromaDB (local persistent) ───────────────────────────────────────────────
-
-class ChromaDBStore(VectorStore):
-    """
-    ChromaDB local persistent store.
-    Persisted to data/db/ — survives restarts.
-    pip install chromadb
-    """
-    def __init__(
-        self,
-        collection_name: str = "capstone_rag",
-        persist_dir: str = "data/db",
+    def add_document(
+        self, filename: str, file_type: str, chunks: list, embeddings: list, sparse_embeddings: list = None
     ):
-        try:
-            import chromadb
-        except ImportError:
-            raise ImportError("Run: pip install chromadb")
+        """
+        Adds a document's chunks and embeddings to the vector store.
+        If the filename already exists, it overwrites the existing data to avoid duplication.
+        """
+        pass
 
-        Path(persist_dir).mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=persist_dir)
-        self._collection = self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+    @abstractmethod
+    def search(self, query_embedding: list[float], top_k: int = 5, sparse_embedding: dict = None) -> list[dict]:
+        """
+        Searches the vector store for chunks matching the query embedding.
+        Returns a list of dictionaries containing 'chunk' and 'metadata'.
+        """
+        pass
 
-    def add_documents(
-        self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
-    ) -> None:
-        if not documents:
+
+class JSONVectorStore(BaseVectorStore):
+    def __init__(self, filepath: str = "data/vector_store.json"):
+        self.filepath = filepath
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+        if not os.path.exists(self.filepath):
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+
+    def add_document(
+        self, filename: str, file_type: str, chunks: list, embeddings: list, sparse_embeddings: list = None
+    ):
+        from rag.scratch import delete_from_json
+        delete_from_json(filename)
+        from config.settings import settings
+        data = {}
+        if os.path.exists(self.filepath):
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+
+        # Update or add the document entry
+        chunk_data = []
+        for i, (c, e) in enumerate(zip(chunks, embeddings)):
+            chunk_dict = {"chunk": c, "embedding": e}
+            if sparse_embeddings:
+                chunk_dict["sparse_embedding"] = {
+                    "indices": sparse_embeddings[i].indices.tolist(),
+                    "values": sparse_embeddings[i].values.tolist()
+                }
+            chunk_data.append(chunk_dict)
+            
+        data[filename] = {
+            "file_name": filename,
+            "file_type": file_type,
+            "chunks": chunk_data,
+        }
+
+        with open(self.filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+    def search(self, query_embedding: list[float], top_k: int = 5, sparse_embedding: dict = None) -> list[dict]:
+        data = {}
+        if os.path.exists(self.filepath):
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    return []
+
+        dense_results = []
+        sparse_results = []
+        
+        for filename, file_data in data.items():
+            for chunk_data in file_data.get("chunks", []):
+                chunk_embed = chunk_data.get("embedding")
+                if chunk_embed and len(chunk_embed) == len(query_embedding):
+                    # Compute dense cosine similarity
+                    dot_product = sum(a * b for a, b in zip(chunk_embed, query_embedding))
+                    norm_a = math.sqrt(sum(a * a for a in chunk_embed))
+                    norm_b = math.sqrt(sum(b * b for b in query_embedding))
+                    dense_similarity = dot_product / (norm_a * norm_b) if norm_a and norm_b else 0
+                    
+                    item = {
+                        "chunk": chunk_data["chunk"],
+                        "metadata": {"file_name": filename, "file_type": file_data.get("file_type")},
+                    }
+                    dense_results.append((dense_similarity, item))
+                    
+                    # Compute sparse similarity if requested
+                    if sparse_embedding and "sparse_embedding" in chunk_data:
+                        query_indices = sparse_embedding["indices"]
+                        query_values = sparse_embedding["values"]
+                        
+                        doc_indices = chunk_data["sparse_embedding"]["indices"]
+                        doc_values = chunk_data["sparse_embedding"]["values"]
+                        
+                        # Calculate dot product of sparse vectors
+                        query_dict = dict(zip(query_indices, query_values))
+                        doc_dict = dict(zip(doc_indices, doc_values))
+                        
+                        sparse_similarity = sum(query_dict.get(k, 0) * doc_dict[k] for k in doc_dict)
+                        sparse_results.append((sparse_similarity, item))
+
+        if not sparse_embedding or not sparse_results:
+            # Sort by dense only
+            dense_results.sort(key=lambda x: x[0], reverse=True)
+            return [res[1] for res in dense_results[:top_k]]
+            
+        # Perform Reciprocal Rank Fusion (RRF)
+        dense_results.sort(key=lambda x: x[0], reverse=True)
+        sparse_results.sort(key=lambda x: x[0], reverse=True)
+        
+        rrf_scores = {}
+        
+        for rank, (_, item) in enumerate(dense_results):
+            chunk_text = item["chunk"]
+            rrf_scores[chunk_text] = rrf_scores.get(chunk_text, 0) + (1.0 / (60 + rank + 1))
+            
+        for rank, (_, item) in enumerate(sparse_results):
+            chunk_text = item["chunk"]
+            rrf_scores[chunk_text] = rrf_scores.get(chunk_text, 0) + (1.0 / (60 + rank + 1))
+            
+        # Map chunks back to items
+        chunk_to_item = {item["chunk"]: item for _, item in dense_results}
+        
+        # Sort by combined RRF score
+        fused = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        return [chunk_to_item[chunk_text] for chunk_text, score in fused[:top_k]]
+
+
+class ChromaDBStore(BaseVectorStore):
+    def __init__(self, persist_directory: str = "data/db/chroma"):
+        import chromadb
+        self.persist_directory=persist_directory
+        os.makedirs(self.persist_directory, exist_ok=True)
+        self.client = chromadb.PersistentClient(path=persist_directory)
+        self.collection = self.client.get_or_create_collection(name=settings.CHROMA_COLLECTION)
+    def add_document(
+        self, filename: str, file_type: str, chunks: list, embeddings: list, sparse_embeddings: list = None
+    ):
+        if not chunks or not embeddings:
             return
-        if ids is None:
-            start = self._collection.count()
-            ids = [f"doc_{start + i}" for i in range(len(documents))]
-        if metadata is None:
-            metadata = [{}] * len(documents)
-        self._collection.upsert(
-            documents=documents,
+
+        from rag.scratch import delete_from_chroma
+        delete_from_chroma(filename)
+
+        from config.settings import settings
+
+        ids = []
+        metadata = []
+        for i in range(len(chunks)):
+            ids.append(f"{filename}_{i}")
+            meta = {"file_name": filename, "file_type": file_type}
+            if sparse_embeddings:
+                import json
+                meta["sparse_embedding"] = json.dumps({
+                    "indices": sparse_embeddings[i].indices.tolist(),
+                    "values": sparse_embeddings[i].values.tolist()
+                })
+            metadata.append(meta)
+
+        self.collection.upsert(
+            documents=chunks,
             embeddings=embeddings,
             metadatas=metadata,
-            ids=ids,
+            ids=ids
         )
 
-    def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        results = self._collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, self._collection.count() or 1),
-            include=["documents", "metadatas", "distances"],
-        )
-        output = []
-        docs  = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-        dists = results.get("distances", [[]])[0]
-        for doc, meta, dist in zip(docs, metas, dists):
-            output.append({
-                "text": doc,
-                "metadata": meta,
-                # ChromaDB cosine distance: 0=identical → similarity 0-1
-                "score": round(1 - dist / 2, 4),
-            })
-        return output
+    def search(self, query_embedding: list[float], top_k: int = 5, sparse_embedding: dict = None) -> list[dict]:
+        if not self.collection:
+            return []
 
-    def delete(self, document_ids: List[str]) -> None:
-        self._collection.delete(ids=document_ids)
-
-    def count(self) -> int:
-        return self._collection.count()
-
-    def reset(self) -> None:
-        """Wipe the collection — useful for re-indexing."""
-        self._client.delete_collection(self._collection.name)
-        self._collection = self._client.create_collection(
-            name=self._collection.name,
-            metadata={"hnsw:space": "cosine"},
-        )
-
-
-# ── Pinecone (cloud) ──────────────────────────────────────────────────────────
-
-class PineconeStore(VectorStore):
-    """
-    Pinecone serverless/pod-based vector DB — production cloud scale.
-
-    pip install pinecone-client
-
-    Required env vars:
-        PINECONE_API_KEY   — from console.pinecone.io
-        PINECONE_INDEX_NAME — pre-created index (must match embedding dim)
-
-    The index must already exist with the correct dimension and metric.
-    Create it once via the Pinecone console or SDK before first use.
-    """
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        index_name: Optional[str] = None,
-        namespace: str = "",
-    ):
+        # Note: ChromaDB doesn't natively support sparse vectors seamlessly yet. 
+        # We fall back to standard dense retrieval.
         try:
-            from pinecone import Pinecone
-        except ImportError:
-            raise ImportError("Run: pip install pinecone-client")
-
-        api_key = api_key or os.environ.get("PINECONE_API_KEY", "")
-        index_name = index_name or os.environ.get("PINECONE_INDEX_NAME", "")
-
-        if not api_key:
-            raise ValueError("PINECONE_API_KEY is required (env or constructor arg)")
-        if not index_name:
-            raise ValueError("PINECONE_INDEX_NAME is required (env or constructor arg)")
-
-        self._namespace = namespace
-        pc = Pinecone(api_key=api_key)
-        self._index = pc.Index(index_name)
-
-    def add_documents(
-        self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
-    ) -> None:
-        if not documents:
-            return
-        if ids is None:
-            ids = [str(uuid.uuid4()) for _ in documents]
-        if metadata is None:
-            metadata = [{} for _ in documents]
-
-        # Pinecone expects metadata to carry the text (it doesn't store raw docs)
-        records = []
-        for doc_id, embedding, meta, text in zip(ids, embeddings, metadata, documents):
-            combined_meta = {**meta, "text": text}
-            records.append({"id": doc_id, "values": embedding, "metadata": combined_meta})
-
-        # Upsert in batches of 100 (Pinecone limit)
-        batch_size = 100
-        for i in range(0, len(records), batch_size):
-            self._index.upsert(
-                vectors=records[i : i + batch_size],
-                namespace=self._namespace,
+            result = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k
             )
 
-    def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        results = self._index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            include_metadata=True,
-            namespace=self._namespace,
-        )
-        output = []
-        for match in results.get("matches", []):
-            meta = dict(match.get("metadata", {}))
-            text = meta.pop("text", "")
-            output.append({
-                "text": text,
-                "metadata": meta,
-                "score": round(float(match.get("score", 0.0)), 4),
-            })
-        return output
+            results = []
+            for i in range(len(result["documents"][0])):
+                doc = result["documents"][0][i]
+                metadata = result["metadatas"][0][i]
+                score = result["distances"][0][i]
 
-    def delete(self, document_ids: List[str]) -> None:
-        self._index.delete(ids=document_ids, namespace=self._namespace)
+                results.append(
+                    {
+                        "chunk": doc,
+                        "metadata": metadata,
+                        "score": score
+                    }
+                )
+            return results
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"ChromaDB search failed: {e}")
+            return []
 
-    def count(self) -> int:
-        stats = self._index.describe_index_stats()
-        ns_stats = stats.get("namespaces", {}).get(self._namespace, {})
-        return int(ns_stats.get("vector_count", 0))
-
-
-# ── Qdrant (local Docker or cloud) ───────────────────────────────────────────
-
-class QdrantStore(VectorStore):
-    """
-    Qdrant vector DB — runs as local Docker container or Qdrant Cloud.
-
-    pip install qdrant-client
-
-    Local Docker:
-        docker run -p 6333:6333 qdrant/qdrant
-        → url="http://localhost:6333", api_key=None
-
-    Qdrant Cloud:
-        → url="https://<cluster-id>.cloud.qdrant.io", api_key="<your-key>"
-
-    Required env vars (alternative to constructor args):
-        QDRANT_URL         e.g. http://localhost:6333
-        QDRANT_API_KEY     (optional for local)
-        QDRANT_COLLECTION  collection name
-
-    The collection is created automatically on first use if it doesn't exist.
-    You must supply `vector_size` to match your embedding model's dimension
-    (e.g. 1536 for text-embedding-3-small, 384 for all-MiniLM-L6-v2).
-    """
-
-    def __init__(
-        self,
-        url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        collection_name: Optional[str] = None,
-        vector_size: int = 1536,
-        distance: str = "Cosine",
+# TODO: Implement PineconeStore
+class PineconeStore(BaseVectorStore):
+    def add_document(
+        self, filename: str, file_type: str, chunks: list, embeddings: list
     ):
-        try:
-            from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams
-        except ImportError:
-            raise ImportError("Run: pip install qdrant-client")
+        pass
 
-        url = url or os.environ.get("QDRANT_URL", "http://localhost:6333")
-        api_key = api_key or os.environ.get("QDRANT_API_KEY") or None
-        collection_name = collection_name or os.environ.get(
-            "QDRANT_COLLECTION", "capstone_rag"
-        )
+    def search(self, query_embedding: list[float], top_k: int = 5) -> list[dict]:
+        pass
 
-        self._collection = collection_name
-        self._client = QdrantClient(url=url, api_key=api_key)
 
-        # Create collection if it doesn't exist
-        existing = {c.name for c in self._client.get_collections().collections}
-        if collection_name not in existing:
-            dist_map = {
-                "Cosine": Distance.COSINE,
-                "Euclid": Distance.EUCLID,
-                "Dot":    Distance.DOT,
-            }
-            self._client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=dist_map.get(distance, Distance.COSINE),
-                ),
-            )
 
-    def add_documents(
-        self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
-    ) -> None:
-        if not documents:
+class QdrantStore(BaseVectorStore):
+    def __init__(self, url: str, api_key: str, collection_name: str):
+        from qdrant_client import QdrantClient
+        self.collection_name = collection_name
+        self.client = QdrantClient(url=url, api_key=api_key)
+        # Aticipate Collection does not exist
+        self.collection_exist=False
+
+    def add_document(
+        self, filename: str, file_type: str, chunks: list, embeddings: list, sparse_embeddings: list = None
+    ):
+        if not chunks or not embeddings:
             return
-        from qdrant_client.models import PointStruct
+        from qdrant_client.models import PointStruct, VectorParams, Distance, SparseVectorParams
 
-        if ids is None:
-            ids = [str(uuid.uuid4()) for _ in documents]
-        if metadata is None:
-            metadata = [{} for _ in documents]
+        if not self.collection_exist:
+            # Check if collection exists
+            if self.client.collection_exists(self.collection_name):
+                col = self.client.get_collection(self.collection_name)
+                # Check if it has the new named vector schema
+                if not isinstance(col.config.params.vectors, dict) or "dense" not in col.config.params.vectors:
+                    # Old schema: overwrite as requested
+                    self.client.delete_collection(self.collection_name)
+                else:
+                    self.collection_exist = True
+            
+            if not self.collection_exist:
+                vector_size = len(embeddings[0]) # 384, 762, 1058
+                # Create collection with named vectors for dense and sparse
+                self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config={
+                        "dense": VectorParams(size=vector_size, distance=Distance.COSINE)
+                    },
+                    sparse_vectors_config={
+                        "sparse": SparseVectorParams()
+                    }
+                )
+                self.collection_exist = True
+
+        # Adding documents in to qdrant
+        from rag.scratch import delete_from_qdrant
+        delete_from_qdrant(filename)
 
         points = []
-        for point_id, embedding, meta, text in zip(ids, embeddings, metadata, documents):
-            payload = {**meta, "text": text}
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{i}"))
+            
+            vector_payload = {"dense": embedding}
+            if sparse_embeddings:
+                s_emb = sparse_embeddings[i]
+                # Convert fastembed SparseEmbedding to dict expected by Qdrant
+                vector_payload["sparse"] = {"indices": s_emb.indices.tolist(), "values": s_emb.values.tolist()}
+
             points.append(
-                PointStruct(id=point_id, vector=embedding, payload=payload)
+                PointStruct(
+                    id = point_id,
+                    vector=vector_payload,
+                    payload={"chunk" : chunk, "file_name" : filename, "file_type" : file_type}
+                )
             )
-
-        # Upsert in batches of 100
-        batch_size = 100
-        for i in range(0, len(points), batch_size):
-            self._client.upsert(
-                collection_name=self._collection,
-                points=points[i : i + batch_size],
-            )
-
-    def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        results = self._client.search(
-            collection_name=self._collection,
-            query_vector=query_embedding,
-            limit=top_k,
-            with_payload=True,
-        )
-        output = []
-        for hit in results:
-            payload = dict(hit.payload or {})
-            text = payload.pop("text", "")
-            output.append({
-                "text": text,
-                "metadata": payload,
-                "score": round(float(hit.score), 4),
-            })
-        return output
-
-    def delete(self, document_ids: List[str]) -> None:
-        from qdrant_client.models import PointIdsList
-        self._client.delete(
-            collection_name=self._collection,
-            points_selector=PointIdsList(points=document_ids),
+        self.client.upsert(
+            collection_name=self.collection_name,
+            points=points
         )
 
-    def count(self) -> int:
-        info = self._client.get_collection(collection_name=self._collection)
-        return int(info.points_count or 0)
+    def search(self, query_embedding: list[float], top_k: int = 5, sparse_embedding: dict = None) -> list[dict]:
+        from qdrant_client import models
+        try:
+            if sparse_embedding:
+                # Hybrid search using Prefetch and Fusion
+                prefetch = [
+                    models.Prefetch(
+                        query=models.SparseVector(
+                            indices=sparse_embedding["indices"],
+                            values=sparse_embedding["values"]
+                        ),
+                        using="sparse",
+                        limit=top_k
+                    ),
+                    models.Prefetch(
+                        query=query_embedding,
+                        using="dense",
+                        limit=top_k
+                    )
+                ]
+                temp = self.client.query_points(
+                    collection_name=self.collection_name,
+                    prefetch=prefetch,
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    limit=top_k
+                )
+            else:
+                # Try with named vector "dense" first (new schema)
+                temp = self.client.query_points(
+                    collection_name = self.collection_name,
+                    query = query_embedding,
+                    using = "dense",
+                    limit = top_k
+                )
+        except Exception as e:
+            try:
+                # Fallback to unnamed vector (old schema)
+                temp = self.client.query_points(
+                    collection_name = self.collection_name,
+                    query = query_embedding,
+                    limit = top_k
+                )
+            except Exception as e2:
+                import logging
+                logging.getLogger(__name__).error(f"Qdrant search failed on both named and unnamed schemas: {e2}")
+                return []
 
+        results = []
+        for item in temp.points:
+            results.append(
+                {
+               "chunk": item.payload["chunk"],
+               "metadata": {
+                   'file_name' : item.payload["file_name"],
+                   'file_type' : item.payload["file_type"]
+               },
+               "score": item.score
+                }
+            )
+        return results
 
-# ── Factory ───────────────────────────────────────────────────────────────────
 
 class VectorStoreFactory:
-    """
-    Returns the right VectorStore from environment config.
-
-    Set VECTOR_STORE_BACKEND in .env:
-        chroma   → ChromaDBStore  (default, local)
-        pinecone → PineconeStore  (cloud, needs PINECONE_API_KEY + PINECONE_INDEX_NAME)
-        qdrant   → QdrantStore    (local Docker or cloud, needs QDRANT_URL)
-    """
-
     @staticmethod
-    def get_store(
-        backend: Optional[str] = None,
-        **kwargs: Any,
-    ) -> VectorStore:
-        backend = backend or os.environ.get("VECTOR_STORE_BACKEND", "chroma")
+    def get_vector_store() -> BaseVectorStore:
+        from config.settings import settings
 
-        if backend == "chroma":
-            return ChromaDBStore(
-                collection_name=kwargs.get("collection_name", "capstone_rag"),
-                persist_dir=kwargs.get("persist_dir", "data/db"),
-            )
-        elif backend == "pinecone":
+        store_type = getattr(settings, "VECTOR_STORE_TYPE", "json").lower()
+
+        if store_type == "json":
+            return JSONVectorStore(filepath=settings.VECTOR_STORE_PATH)
+        elif store_type == "chromadb":
+            return ChromaDBStore(persist_directory=settings.CHROMA_PERSIST_DIR)
+        elif store_type == "pinecone":
             return PineconeStore(
-                api_key=kwargs.get("api_key"),
-                index_name=kwargs.get("index_name"),
-                namespace=kwargs.get("namespace", ""),
+                api_key=settings.PINECONE_API_KEY,
+                index_name=settings.PINECONE_INDEX_NAME,
             )
-        elif backend == "qdrant":
+        elif store_type == "qdrant":
             return QdrantStore(
-                url=kwargs.get("url"),
-                api_key=kwargs.get("api_key"),
-                collection_name=kwargs.get("collection_name"),
-                vector_size=kwargs.get("vector_size", 1536),
+                url=settings.QDRANT_URL,
+                api_key=settings.QDRANT_API_KEY,
+                collection_name=settings.QDRANT_COLLECTION,
             )
         else:
-            raise ValueError(
-                f"Unknown backend '{backend}'. Choose: chroma, pinecone, qdrant"
-            )
+            raise ValueError(f"Unknown vector store type: {store_type}")
