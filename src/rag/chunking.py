@@ -229,3 +229,29 @@ class SemanticChunker(BaseChunker):
             chunks.append(buffer.strip())
 
         return [c for c in chunks if c]
+
+
+class SlidingWindowChunking:
+    """Async adapter used by Vishnu's ingestion pipeline (src/pipeline/store.py).
+
+    Same sliding-window behaviour as SlidingWindowChunker, exposed as
+    ``await chunker.chunk(text)`` so both code tracks share one chunking module.
+    """
+
+    def __init__(self, chunk_size: int = 1000, overlap: int = 200):
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+
+    async def chunk(self, text: str) -> List[str]:
+        if not text:
+            return []
+        chunks: List[str] = []
+        start, n = 0, len(text)
+        step = max(1, self.chunk_size - self.overlap)
+        while start < n:
+            end = min(start + self.chunk_size, n)
+            chunks.append(text[start:end])
+            if end == n:
+                break
+            start += step
+        return chunks

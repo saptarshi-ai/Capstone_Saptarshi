@@ -48,7 +48,7 @@ try {
     Write-Host "=========================================="
 
     # Run the evaluation script
-    python scripts/run_rag_eval.py
+    python scripts/run_pipeline_eval.py
 
 } finally {
     Pop-Location

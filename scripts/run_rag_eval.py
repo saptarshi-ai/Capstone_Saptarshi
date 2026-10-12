@@ -10,8 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rag.chunking import chunk_by_characters
-from src.rag.embeddings import get_default_embedder
-from src.rag.vector_store import ChromaDBStore
+from src.rag.legacy_embeddings import get_default_embedder
+from src.rag.legacy_vector_store import ChromaDBStore
 from scripts.run_eval import build_pipeline, main as run_eval_main
 
 

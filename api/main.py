@@ -15,11 +15,11 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 
 from src.schemas.api import QueryRequest, QueryResponse, UploadResponse
 from src.rag.chunking import chunk_by_characters
-from src.rag.embeddings import get_default_embedder
-from src.rag.vector_store import ChromaDBStore
-from src.rag.retriever import DenseRetriever
-from src.rag.generator import LLMGenerator
-from src.pipeline.store import ExperimentTracker
+from src.rag.legacy_embeddings import get_default_embedder
+from src.rag.legacy_vector_store import ChromaDBStore
+from src.rag.legacy_retriever import DenseRetriever
+from src.rag.legacy_generator import LLMGenerator
+from src.pipeline.run_tracker import ExperimentTracker
 
 app = FastAPI(
     title="Basecamp Handbook RAG API",

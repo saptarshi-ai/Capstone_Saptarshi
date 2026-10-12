@@ -1,103 +1,110 @@
 """
-SQLite Experiment Tracking.
-Logs every eval run and individual test case results to data/db/eval_runs.db.
+Document Ingestion Pipeline.
+This module manages the pipeline for ingesting documents, chunking them,
+and generating embeddings for vector storage.
+
+Classes:
+- DocumentIngestionPipeline: Manages document processing workflow.
 """
-from __future__ import annotations
-import csv
-import json
-import sqlite3
-import time
+
+import asyncio
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+
+from config.logging_config import setup_logger
+from config.settings import settings
+from rag.chunking import SlidingWindowChunking
+from rag.document_loader import DocumentLoadFactory
+from rag.embeddings import ModelSelector
+from rag.vector_store import VectorStoreFactory
+
+logger = setup_logger(__name__)
 
 
-_DDL = """
-CREATE TABLE IF NOT EXISTS runs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at  REAL,
-    config      TEXT,   -- JSON
-    notes       TEXT
-);
+class DocumentIngestionPipeline:
 
-CREATE TABLE IF NOT EXISTS eval_cases (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id      INTEGER REFERENCES runs(id),
-    query_id    TEXT,
-    query       TEXT,
-    response    TEXT,
-    ideal       TEXT,
-    judge_score REAL,
-    latency_s   REAL,
-    extra       TEXT    -- JSON for any additional fields
-);
-"""
-
-
-class ExperimentTracker:
-    def __init__(self, db_path: str = "data/db/eval_runs.db"):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.executescript(_DDL)
-        self._conn.commit()
-
-    def log_run(self, config: Dict[str, Any], notes: str = "") -> int:
-        """Insert a new run record. Returns run_id."""
-        cur = self._conn.execute(
-            "INSERT INTO runs (created_at, config, notes) VALUES (?, ?, ?)",
-            (time.time(), json.dumps(config), notes),
+    def __init__(self, chunker=None, embedder=None, vector_store=None):
+        logger.info("Initializing DocumentIngestionPipeline")
+        self.chunker = chunker or SlidingWindowChunking(
+            chunk_size=settings.CHUNK_SIZE, overlap=settings.CHUNK_OVERLAP
         )
-        self._conn.commit()
-        return cur.lastrowid
+        self.embedder = embedder or ModelSelector
+        # Configure Vector Store from settings via Factory
+        self.vector_store = vector_store or VectorStoreFactory.get_vector_store()
 
-    def log_evaluation_case(
-        self,
-        run_id: int,
-        query_id: str,
-        query: str,
-        response: str,
-        ideal: str,
-        judge_score: float,
-        latency_s: float = 0.0,
-        extra: Optional[Dict] = None,
-    ) -> None:
-        self._conn.execute(
-            """INSERT INTO eval_cases
-               (run_id, query_id, query, response, ideal, judge_score, latency_s, extra)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                run_id, query_id, query, response, ideal,
-                judge_score, latency_s, json.dumps(extra or {}),
-            ),
-        )
-        self._conn.commit()
+        self.redactor = None
+        if getattr(settings, "USE_PII_REDACTION", False):
+            from rag.pii_redactor import PIIRedactor
 
-    def get_run_summary(self, run_id: int) -> Dict[str, Any]:
-        cur = self._conn.execute(
-            """SELECT AVG(judge_score), AVG(latency_s), COUNT(*)
-               FROM eval_cases WHERE run_id = ?""",
-            (run_id,),
-        )
-        avg_score, avg_latency, count = cur.fetchone()
-        return {
-            "run_id": run_id,
-            "avg_judge_score": round(avg_score or 0, 3),
-            "avg_latency_s": round(avg_latency or 0, 3),
-            "case_count": count,
-        }
+            self.redactor = PIIRedactor()
 
-    def export_to_csv(self, output_path: str = "data/db/eval_export.csv") -> str:
-        rows = self._conn.execute(
-            "SELECT * FROM eval_cases ORDER BY run_id, id"
-        ).fetchall()
-        cols = [d[0] for d in self._conn.execute(
-            "SELECT * FROM eval_cases LIMIT 0"
-        ).description or []]
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(cols)
-            w.writerows(rows)
-        return output_path
+    async def ingest_file(self, path) -> list[str]:
+        try:
+            path_obj = Path(path)
+            file_name = path_obj.name
+            file_type = path_obj.suffix.lstrip(".")
 
-    def close(self):
-        self._conn.close()
+            logger.info(f"1. Loading Document.....{file_name}")
+            loader = DocumentLoadFactory.get_loader(path_obj)
+            text_content = await loader.load()
+            logger.info(f"Successfully loaded document: {file_name}")
+
+            if self.redactor:
+                logger.info(f"Redacting PII from document: {file_name}")
+                text_content = self.redactor.redact_text(text_content)
+
+            logger.info(f"2. Document Chunking.....{file_name}")
+            chunks = await self.chunker.chunk(text_content)
+            logger.info(f"Successfully chunked document into {len(chunks)} pieces.")
+
+            logger.info(f"3. Embeddings.....{file_name}")
+            embedded = await self.embedder.get_embedded(chunks)
+            logger.info(f"Successfully generated {len(embedded)} dense embeddings.")
+
+            sparse_embedded = None
+            if getattr(settings, "USE_HYBRID_EMBEDDING", True):
+                sparse_embedded = self.embedder.get_sparse_embedded(chunks)
+                if sparse_embedded:
+                    logger.info(
+                        f"Successfully generated {len(sparse_embedded)} sparse embeddings."
+                    )
+
+            logger.info(f"4. Vector Storage.....{file_name}")
+
+            # Store the data in the vector store
+            self.vector_store.add_document(
+                filename=file_name,
+                file_type=file_type,
+                chunks=chunks,
+                embeddings=embedded,
+                sparse_embeddings=sparse_embedded,
+            )
+            logger.info(f"Successfully completed vector storage for: {file_name}")
+            return chunks
+        except Exception as e:
+            logger.error(f"Failed to ingest file {file_name}: {e}")
+            raise
+
+    async def ingest_directory(self, path) -> list[str]:
+        try:
+            path = Path(path)
+            all_files = []
+            files = path.rglob("*")
+
+            for file in files:
+                if file.is_file():
+                    all_files.append(await self.ingest_file(file))
+
+            return all_files
+        except Exception as e:
+            logger.error(f"Failed to ingest directory {path}: {e}")
+            raise
+
+
+async def main():
+    pipeline = DocumentIngestionPipeline()
+    await pipeline.ingest_directory(settings.DATA_DIRECTORY)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

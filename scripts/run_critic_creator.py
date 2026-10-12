@@ -9,15 +9,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.eval.golden import load_golden_set
 from src.eval.critic_creator import CriticCreatorAgent
-from src.rag.retriever import DenseRetriever
-from src.rag.vector_store import ChromaDBStore
-from src.rag.embeddings import get_default_embedder
+from src.rag.legacy_retriever import DenseRetriever
+from src.rag.legacy_vector_store import ChromaDBStore
+from src.rag.legacy_embeddings import get_default_embedder
 
 
 def main():
     dataset = load_golden_set()
     embedder = get_default_embedder()
-    store = ChromaDBStore(collect_name="capstone_rag", persist_dir="data/db")
+    store = ChromaDBStore(collection_name="capstone_rag", persist_dir="data/db")
     retriever = DenseRetriever(vector_store=store, embedder=embedder)
     agent = CriticCreatorAgent(max_rounds=2)
 

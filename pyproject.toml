@@ -24,7 +24,20 @@ dependencies = [
     "pypdf",
     "pytesseract",
     "pdf2image",
-    "sentence-transformers"
+    "sentence-transformers",
+    # Vishnu pipeline (W8-W11): vector stores, hybrid search, PII, prompt compression
+    "aiohttp",
+    "ollama",
+    "qdrant-client",
+    "pinecone-client",
+    "cohere",
+    "huggingface_hub",
+    "fastembed",
+    "presidio-analyzer",
+    "presidio-anonymizer",
+    "spacy",
+    "tiktoken",
+    "llmlingua>=0.2.2"
 ]
 
 [tool.black]

@@ -1,95 +1,176 @@
 """
 Prompt Construction and LLM Answer Generation.
-Injects retrieved context into the prompt and calls GPT-4o.
-Supports streaming (token-by-token) for the Streamlit UI.
+This file bridges the gap between retrieved documents and the final user answer.
+It contains the prompt templates necessary to instruct the LLM on how to use the provided
+context.
 """
-from __future__ import annotations
-import os
-from pathlib import Path
-from typing import Generator, List, Dict, Any
 
-import openai
+import math
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
+from config.logging_config import setup_logger
+from config.settings import settings
+from rag.prompts.prompts import build_generator_prompt
 
-
-def _load_prompt(filename: str) -> str:
-    return (_PROMPT_DIR / filename).read_text().strip()
-
-
-def _build_context_block(retrieved: List[Dict[str, Any]]) -> str:
-    """Format retrieved chunks into a numbered context block."""
-    if not retrieved:
-        return "(No relevant context found.)"
-    lines = []
-    for i, chunk in enumerate(retrieved, 1):
-        lines.append(f"[Source {i}]\n{chunk['text'].strip()}")
-    return "\n\n".join(lines)
+logger = setup_logger(__name__)
 
 
 class LLMGenerator:
-    """
-    Manages interactions with GPT-4o for grounded answer generation.
-    System prompt: loaded from prompts/system_prompt.txt
-    User prompt:   loaded from prompts/user_prompt.txt (has {context} and {query} slots)
-    """
-    def __init__(self, model: str = "gpt-4o", temperature: float = 0.0):
-        self.model = model
-        self.temperature = temperature
-        self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        self._system_prompt = _load_prompt("system_prompt.txt")
-        self._user_prompt_template = _load_prompt("user_prompt.txt")
+    def __init__(self):
+        self.source = getattr(settings, "LLM_SOURCE", "openai").lower()
+        self.compressor = None
+        if getattr(settings, "USE_PROMPT_COMPRESSION", False):
+            from rag.prompt_compressor import get_prompt_compressor
 
-    def _build_messages(self, query: str, retrieved: List[Dict[str, Any]]) -> list:
-        context_block = _build_context_block(retrieved)
-        user_msg = self._user_prompt_template.format(
-            context=context_block, query=query
-        )
-        return [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": user_msg},
-        ]
+            self.compressor = get_prompt_compressor()
 
-    def generate_answer(
-        self, query: str, retrieved_context: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Returns:
-            {answer: str, sources: List[str], model: str}
-        """
-        messages = self._build_messages(query, retrieved_context)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-        )
-        answer = response.choices[0].message.content or ""
-        sources = [c.get("text", "")[:120] + "..." for c in retrieved_context]
-        return {
-            "answer": answer,
-            "sources": sources,
-            "model": self.model,
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-            },
-        }
+        if self.source == "openai":
+            from openai import AsyncOpenAI
 
-    def generate_stream(
-        self, query: str, retrieved_context: List[Dict[str, Any]]
-    ) -> Generator[str, None, None]:
-        """
-        Yields answer tokens one by one for Streamlit streaming.
-        Usage: for token in generator.generate_stream(q, ctx): st.write(token)
-        """
-        messages = self._build_messages(query, retrieved_context)
-        stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            stream=True,
+            self.client = AsyncOpenAI(
+                api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_API_BASE_URL
+            )
+            self.model = getattr(settings, "OPENAI_LLM_MODEL", "gpt-4o-mini")
+        elif self.source == "ollama":
+            import ollama
+
+            # Initialize async client (assumes local ollama on default port, or use settings.OLLAMA_BASE_URL)
+            base_url = getattr(settings, "OLLAMA_BASE_URL", None)
+            if base_url:
+                self.client = ollama.AsyncClient(host=base_url)
+            else:
+                self.client = ollama.AsyncClient()
+            self.model = getattr(settings, "OLLAMA_LLM_MODEL", "llama3")
+        else:
+            raise ValueError(f"Unsupported LLM Source: {self.source}")
+
+    def _build_prompt(self, query: str, context_docs: list[dict]) -> tuple[str, str]:
+        context_str = "\n\n".join(
+            [
+                doc.get("chunk", str(doc)) if isinstance(doc, dict) else str(doc)
+                for doc in context_docs
+            ]
         )
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
+        if self.compressor:
+            context_str = self.compressor.compress_context(query, context_str)
+        return build_generator_prompt(query, context_str), context_str
+
+    async def generate_text(self, prompt: str) -> str:
+        """Generic method to generate text given a prompt (e.g. for query augmentation)."""
+        logger.info(f"Generating text using {self.source} ({self.model})")
+        try:
+            if self.source == "openai":
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=settings.OPENAI_TEMPERATURE,
+                )
+                return response.choices[0].message.content
+            elif self.source == "ollama":
+                response = await self.client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    options={"temperature": settings.OLLAMA_TEMPERATURE},
+                )
+                return response["response"]
+        except Exception as e:
+            logger.error(f"Error generating text: {e}")
+            raise
+
+    async def generate_answer(
+        self, query: str, retrieved_context: list[dict], return_usage: bool = False
+    ):
+        prompt, final_context_str = self._build_prompt(query, retrieved_context)
+        logger.info(f"Generating answer using {self.source} ({self.model})")
+
+        try:
+            if self.source == "openai":
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=settings.OPENAI_TEMPERATURE,
+                    logprobs=True,
+                )
+                answer = response.choices[0].message.content
+
+                confidence = 1.0
+                if (
+                    hasattr(response.choices[0], "logprobs")
+                    and response.choices[0].logprobs
+                ):
+                    content_logprobs = response.choices[0].logprobs.content
+                    if content_logprobs:
+                        avg_logprob = sum(
+                            token.logprob for token in content_logprobs
+                        ) / len(content_logprobs)
+                        confidence = math.exp(avg_logprob)
+
+                if return_usage and hasattr(response, "usage"):
+                    import tiktoken
+
+                    encoder = tiktoken.get_encoding("cl100k_base")
+                    return answer, {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "confidence_score": confidence,
+                        "context_tokens": len(encoder.encode(final_context_str)),
+                    }
+                return (
+                    answer
+                    if not return_usage
+                    else (
+                        answer,
+                        {
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "confidence_score": confidence,
+                            "context_tokens": 0,
+                        },
+                    )
+                )
+            elif self.source == "ollama":
+                # Note: Assuming ollama has a chat method or generate method.
+                # using sync ollama wrapper, might block async loop slightly, but OK for MVP.
+                response = await self.client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    options={"temperature": settings.OLLAMA_TEMPERATURE},
+                )
+                answer = response["response"]
+                # Ollama returns eval_count and prompt_eval_count in some versions
+                if return_usage:
+                    import tiktoken
+
+                    encoder = tiktoken.get_encoding("cl100k_base")
+                    return answer, {
+                        "prompt_tokens": response.get("prompt_eval_count", 0),
+                        "completion_tokens": response.get("eval_count", 0),
+                        "confidence_score": None,
+                        "context_tokens": len(encoder.encode(final_context_str)),
+                    }
+                return answer
+        except Exception as e:
+            logger.error(f"Error generating answer: {e}")
+            raise
+
+    async def generate_stream(self, query: str, retrieved_context: list[dict]):
+        prompt, _ = self._build_prompt(query, retrieved_context)
+
+        if self.source == "openai":
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=settings.OPENAI_TEMPERATURE,
+                stream=True,
+            )
+            async for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+        elif self.source == "ollama":
+            stream = await self.client.generate(
+                model=self.model,
+                prompt=prompt,
+                options={"temperature": settings.OLLAMA_TEMPERATURE},
+                stream=True,
+            )
+            async for chunk in stream:
+                yield chunk["response"]

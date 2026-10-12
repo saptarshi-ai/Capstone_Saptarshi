@@ -18,11 +18,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.eval.golden import load_golden_set, run_evaluation, aggregate_metrics
 from src.eval.judge import LLMJudge
 from src.rag.chunking import chunk_by_characters
-from src.rag.embeddings import get_default_embedder
-from src.rag.vector_store import ChromaDBStore
-from src.rag.retriever import DenseRetriever
-from src.rag.generator import LLMGenerator
-from src.pipeline.store import ExperimentTracker
+from src.rag.legacy_embeddings import get_default_embedder
+from src.rag.legacy_vector_store import ChromaDBStore
+from src.rag.legacy_retriever import DenseRetriever
+from src.rag.legacy_generator import LLMGenerator
+from src.pipeline.run_tracker import ExperimentTracker
 
 
 def build_pipeline(top_k: int = 5):

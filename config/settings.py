@@ -74,6 +74,26 @@ class Settings(BaseSettings):
 
     USE_MULTI_QUERY: bool = False
     USE_QUERY_DECOMPOSITION: bool = False
+    USE_HYDE: bool = False
+    USE_QUERY_REWRITING: bool = False
+    USE_PII_REDACTION: bool = False
+    USE_PROMPT_COMPRESSION: bool = False
+    PROMPT_COMPRESSION_METHOD: str = "llmlingua2"
+    LLMLINGUA_TARGET_TOKEN: int = 200
+    PROMPT_COMPRESSION_MAX_CHARS: int = 4000
+    PII_NLP_ENGINE_NAME: str = "spacy"  # Options: spacy, stanza, transformers
+    PII_NLP_MODEL_NAME: str = (
+        "en_core_web_sm"  # e.g. en_core_web_sm, dslim/bert-base-NER
+    )
+
+    ENABLE_SEMANTIC_CACHE: bool = False
+    SEMANTIC_CACHE_THRESHOLD: float = 0.90
+    SEMANTIC_CACHE_JSON_PATH: str = "data/vector_store_cache.json"
+    SEMANTIC_CACHE_TTL_HOURS: float = 24.0
+
+    ENABLE_EMBEDDING_CACHE: bool = False
+    EMBEDDING_CACHE_JSON_PATH: str = "data/vector_store_ecache.json"
+    EMBEDDING_CACHE_TTL_HOURS: float = 24.0
 
 
 settings = Settings()

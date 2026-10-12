@@ -13,3 +13,10 @@ data/db/*
 !data/db/.gitkeep
 data/temp/*
 !data/temp/.gitkeep
+
+# Vishnu pipeline runtime caches / stores
+data/vector_store.json
+data/vector_store_cache.json
+data/vector_store_ecache.json
+data/chroma/
+data/qdrant/

@@ -1,90 +1,174 @@
 """
 Embedding Model Wrappers.
-Unified interface over OpenAI and HuggingFace embedding models.
-Same model must be used for both documents and queries.
+This module acts as an abstraction layer over various embedding models (e.g., OpenAI's
+text-embedding-ada-002, HuggingFace sentence-transformers, Cohere).
+It provides a unified interface for converting text chunks into dense vector representations.
+It also includes logic for batch processing, handling rate limits, and caching embeddings
+to avoid redundant API calls and reduce costs during indexing.
+
+Classes:
+- BaseEmbeddingModel: Abstract base class for embedding models.
+- OpenAIEmbeddings: Implementation for OpenAI API.
+- HuggingFaceEmbeddings: Local embedding generation using sentence-transformers.
+
+Functions:
+- get_embedding(text): Returns the embedding vector for a single string.
+- get_embeddings_batch(texts): Returns a list of vectors for a batch of strings.
 """
-from __future__ import annotations
-import os
-import time
+
 from abc import ABC, abstractmethod
-from typing import List
-import openai
+
+import ollama
+from openai import AsyncOpenAI
+
+from config.logging_config import setup_logger
+from config.settings import settings
+from rag.embedding_cache import EmbeddingCache
+
+logger = setup_logger(__name__)
+_embedding_cache = EmbeddingCache()
 
 
+# Template for our file loaders
 class BaseEmbeddingModel(ABC):
-    @abstractmethod
-    def get_embedding(self, text: str) -> List[float]:
-        ...
+    def __init__(self):
+        pass
 
     @abstractmethod
-    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        ...
+    async def get_embedding(self, chunk: str) -> list[float]:
+        pass
 
 
 class OpenAIEmbeddings(BaseEmbeddingModel):
-    """
-    OpenAI text-embedding-3-small (default) or text-embedding-3-large.
-    1536-dim vectors. Same model MUST be used for docs and queries.
-    """
-    def __init__(self, model: str = "text-embedding-3-small"):
-        self.model = model
-        self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
-    def get_embedding(self, text: str) -> List[float]:
-        text = text.replace("\n", " ").strip()
-        response = self.client.embeddings.create(input=[text], model=self.model)
-        return response.data[0].embedding
+    def __init__(self):
+        self.client = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_API_BASE_URL
+        )
 
-    def get_embeddings_batch(
-        self, texts: List[str], batch_size: int = 100, retry_delay: float = 1.0
-    ) -> List[List[float]]:
-        """
-        Embed a list of texts in batches to respect API limits.
-        Retries once on rate-limit errors.
-        """
-        embeddings: list[list[float]] = []
-        cleaned = [t.replace("\n", " ").strip() for t in texts]
-        for i in range(0, len(cleaned), batch_size):
-            batch = cleaned[i : i + batch_size]
-            for attempt in range(2):
-                try:
-                    response = self.client.embeddings.create(
-                        input=batch, model=self.model
-                    )
-                    # OpenAI returns in order; sort by index for safety
-                    batch_embs = sorted(response.data, key=lambda d: d.index)
-                    embeddings.extend([d.embedding for d in batch_embs])
-                    break
-                except openai.RateLimitError:
-                    if attempt == 0:
-                        time.sleep(retry_delay)
-                    else:
-                        raise
-        return embeddings
-
-
-class HuggingFaceEmbeddings(BaseEmbeddingModel):
-    """
-    Local HuggingFace sentence-transformers — free, GPU optional.
-    Default: all-MiniLM-L6-v2 (384-dim). Good for offline dev/testing.
-    
-    # PLACEHOLDER — install sentence-transformers if using:
-    # pip install sentence-transformers
-    """
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    async def get_embedding(self, chunk: str) -> list[float]:
         try:
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(model_name)
-        except ImportError:
-            raise ImportError("Run: pip install sentence-transformers")
-
-    def get_embedding(self, text: str) -> List[float]:
-        return self.model.encode(text).tolist()
-
-    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        return self.model.encode(texts).tolist()
+            response = await self.client.embeddings.create(
+                input=[chunk], model=settings.OPENAI_API_EMBEDDING_MODEL
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"OpenAI embedding generation failed: {e}")
+            raise
 
 
-def get_default_embedder() -> BaseEmbeddingModel:
-    """Returns OpenAIEmbeddings with text-embedding-3-small."""
-    return OpenAIEmbeddings(model="text-embedding-3-small")
+class OllamaEmbeddings(BaseEmbeddingModel):
+    async def get_embedding(self, chunk: str) -> list[float]:
+        try:
+            response = ollama.embed(model=settings.OLLAMA_EMBEDDING_MODEL, input=chunk)
+            return response["embeddings"][0]
+        except Exception as e:
+            logger.error(f"Ollama embedding generation failed: {e}")
+            raise
+
+
+# TODO
+class HuggingFaceEmbeddings(BaseEmbeddingModel):
+    pass
+
+
+class ModelSelector:
+    @staticmethod
+    def _get_model():
+        if settings.EMBEDDING_MODEL_SOURCE == "openai":
+            return OpenAIEmbeddings()
+        elif settings.EMBEDDING_MODEL_SOURCE == "ollama":
+            return OllamaEmbeddings()
+        else:
+            raise ValueError(
+                f"Unknown embedding model source: {settings.EMBEDDING_MODEL_SOURCE}"
+            )
+
+    @staticmethod
+    async def get_embedded(chunks: list[str]) -> list[list[float]]:
+        vector = []
+        model = ModelSelector._get_model()
+
+        logger.info(
+            f"Generating embeddings for {len(chunks)} chunks using {settings.EMBEDDING_MODEL_SOURCE} model"
+        )
+
+        try:
+            chunk_size = len(chunks)
+            start = 1
+            for chunk in chunks:
+                cached_emb = await _embedding_cache.get(chunk)
+                if cached_emb:
+                    logger.info("Returning cached embedding from Embedding Cache")
+                    vector.append(cached_emb)
+                else:
+                    embedded = await model.get_embedding(chunk)
+                    await _embedding_cache.set(chunk, embedded)
+                    vector.append(embedded)
+                
+                logger.info(
+                    f"Embedding Progress: {round(start / chunk_size * 100, 2)}%"
+                )
+                start += 1
+            logger.info(f"Successfully generated {len(vector)} embeddings.")
+        except Exception as e:
+            logger.error(f"Error during batch embedding generation: {e}")
+            raise
+
+        return vector
+
+    @staticmethod
+    async def get_single_embedding(query: str) -> list[float]:
+        cached_emb = await _embedding_cache.get(query)
+        if cached_emb:
+            logger.info("Returning cached embedding from Embedding Cache")
+            return cached_emb
+
+        model = ModelSelector._get_model()
+        logger.info(
+            f"Generating embedding for query using {settings.EMBEDDING_MODEL_SOURCE} model"
+        )
+        try:
+            emb = await model.get_embedding(query)
+            await _embedding_cache.set(query, emb)
+            return emb
+        except Exception as e:
+            logger.error(f"Error generating single embedding: {e}")
+            raise
+
+    @staticmethod
+    def get_sparse_embedded(chunks: list[str]):
+        if not getattr(settings, "USE_HYBRID_EMBEDDING", True):
+            return None
+
+        try:
+            from fastembed import SparseTextEmbedding
+
+            model_name = getattr(settings, "SPLADE_MODEL", "prithvida/Splade_PP_en_v1")
+            if getattr(settings, "SPARSE_EMBEDDING_MODEL", "splade").lower() == "bm25":
+                model_name = getattr(settings, "BM25_MODEL", "Qdrant/bm25")
+            sparse_model = SparseTextEmbedding(model_name=model_name)
+            logger.info(f"Generating sparse embeddings using {model_name}")
+            return list(sparse_model.embed(chunks))
+        except Exception as e:
+            logger.warning(f"Failed to generate sparse embeddings: {e}")
+            return None
+
+    @staticmethod
+    def get_single_sparse_embedding(query: str):
+        if not getattr(settings, "USE_HYBRID_SEARCH", False):
+            return None
+
+        try:
+            from fastembed import SparseTextEmbedding
+
+            model_name = getattr(settings, "SPLADE_MODEL", "prithvida/Splade_PP_en_v1")
+            if getattr(settings, "SPARSE_EMBEDDING_MODEL", "splade").lower() == "bm25":
+                model_name = getattr(settings, "BM25_MODEL", "Qdrant/bm25")
+            sparse_model = SparseTextEmbedding(model_name=model_name)
+            logger.info(f"Generating sparse embedding for query using {model_name}")
+            embeddings = list(sparse_model.embed([query]))
+            return embeddings[0] if embeddings else None
+        except Exception as e:
+            logger.warning(f"Failed to generate single sparse embedding: {e}")
+            return None
