@@ -3,13 +3,14 @@ LLM-as-a-Judge evaluation.
 Scores generated answers on faithfulness and relevance using GPT-4o.
 """
 from __future__ import annotations
+
 import json
 import os
 import re
 import time
-from typing import Any, Dict
-import openai
+from typing import Any
 
+import openai
 
 JUDGE_PROMPT = """You are an expert evaluation judge for a RAG (Retrieval-Augmented Generation) system.
 Score the AI-generated answer on TWO dimensions using the rubric below.
@@ -55,7 +56,7 @@ class LLMJudge:
         context: str,
         generated_answer: str,
         expected_answer: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Returns:
             {faithfulness: float, relevance: float, reasoning: str, composite: float}
@@ -76,7 +77,7 @@ class LLMJudge:
                 )
                 raw = response.choices[0].message.content or "{}"
                 # Strip markdown fences
-                raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
+                raw = re.sub(r"```(?:json)?\s*", "", raw).strip().removesuffix("```").strip()
                 scores = json.loads(raw)
                 faithfulness = float(scores.get("faithfulness", 0))
                 relevance = float(scores.get("relevance", 0))
@@ -100,7 +101,7 @@ class ExactMatchJudge:
 
     def evaluate(
         self, generated_answer: str, expected_answer: str, case_sensitive: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         a = generated_answer.strip()
         b = expected_answer.strip()
         if not case_sensitive:

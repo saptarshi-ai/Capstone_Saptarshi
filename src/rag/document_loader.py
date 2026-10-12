@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import ClassVar
 
 
 class BaseDocumentLoader(ABC):
@@ -178,7 +179,7 @@ class DocumentLoadFactory:
         .pdfocr → PDFOcrLoader (scanned / OCR)
     """
 
-    _REGISTRY: dict[str, type[BaseDocumentLoader]] = {
+    _REGISTRY: ClassVar[dict[str, type[BaseDocumentLoader]]] = {
         ".txt":    TextLoader,
         ".md":     MarkdownLoader,
         ".docx":   DocxLoader,

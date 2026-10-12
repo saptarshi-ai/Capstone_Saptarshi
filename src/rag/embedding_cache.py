@@ -3,12 +3,12 @@ Embedding Cache Implementation.
 Caches exact text chunks and their dense embeddings to avoid redundant LLM/API calls.
 """
 
+import hashlib
 import json
 import logging
 import os
 import uuid
-import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from config.settings import settings
 
@@ -138,7 +138,7 @@ class EmbeddingCache:
                 except json.JSONDecodeError:
                     data = {}
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "EMBEDDING_CACHE_TTL_HOURS", 24.0)
 
         key = hash_text(text)
@@ -153,7 +153,7 @@ class EmbeddingCache:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     def _set_chroma(self, text: str, embedding: list[float]):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "EMBEDDING_CACHE_TTL_HOURS", 24.0)
         point_id = get_uuid_from_text(text)
         
@@ -181,7 +181,7 @@ class EmbeddingCache:
             )
             self.collection_exist = True
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "EMBEDDING_CACHE_TTL_HOURS", 24.0)
         point_id = get_uuid_from_text(text)
         

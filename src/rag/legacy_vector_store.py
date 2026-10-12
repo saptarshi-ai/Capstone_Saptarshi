@@ -16,8 +16,7 @@ import os
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ── Abstract Base ─────────────────────────────────────────────────────────────
 
@@ -25,19 +24,19 @@ class VectorStore(ABC):
     @abstractmethod
     def add_documents(
         self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
+        documents: list[str],
+        embeddings: list[list[float]],
+        metadata: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> None: ...
 
     @abstractmethod
     def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]: ...
+        self, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def delete(self, document_ids: List[str]) -> None: ...
+    def delete(self, document_ids: list[str]) -> None: ...
 
     @abstractmethod
     def count(self) -> int: ...
@@ -70,10 +69,10 @@ class ChromaDBStore(VectorStore):
 
     def add_documents(
         self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
+        documents: list[str],
+        embeddings: list[list[float]],
+        metadata: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> None:
         if not documents:
             return
@@ -90,8 +89,8 @@ class ChromaDBStore(VectorStore):
         )
 
     def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
+        self, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict[str, Any]]:
         results = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=min(top_k, self._collection.count() or 1),
@@ -110,7 +109,7 @@ class ChromaDBStore(VectorStore):
             })
         return output
 
-    def delete(self, document_ids: List[str]) -> None:
+    def delete(self, document_ids: list[str]) -> None:
         self._collection.delete(ids=document_ids)
 
     def count(self) -> int:
@@ -143,8 +142,8 @@ class PineconeStore(VectorStore):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        index_name: Optional[str] = None,
+        api_key: str | None = None,
+        index_name: str | None = None,
         namespace: str = "",
     ):
         try:
@@ -166,10 +165,10 @@ class PineconeStore(VectorStore):
 
     def add_documents(
         self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
+        documents: list[str],
+        embeddings: list[list[float]],
+        metadata: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> None:
         if not documents:
             return
@@ -193,8 +192,8 @@ class PineconeStore(VectorStore):
             )
 
     def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
+        self, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict[str, Any]]:
         results = self._index.query(
             vector=query_embedding,
             top_k=top_k,
@@ -212,7 +211,7 @@ class PineconeStore(VectorStore):
             })
         return output
 
-    def delete(self, document_ids: List[str]) -> None:
+    def delete(self, document_ids: list[str]) -> None:
         self._index.delete(ids=document_ids, namespace=self._namespace)
 
     def count(self) -> int:
@@ -248,9 +247,9 @@ class QdrantStore(VectorStore):
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        collection_name: Optional[str] = None,
+        url: str | None = None,
+        api_key: str | None = None,
+        collection_name: str | None = None,
         vector_size: int = 1536,
         distance: str = "Cosine",
     ):
@@ -287,10 +286,10 @@ class QdrantStore(VectorStore):
 
     def add_documents(
         self,
-        documents: List[str],
-        embeddings: List[List[float]],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
+        documents: list[str],
+        embeddings: list[list[float]],
+        metadata: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> None:
         if not documents:
             return
@@ -317,8 +316,8 @@ class QdrantStore(VectorStore):
             )
 
     def search(
-        self, query_embedding: List[float], top_k: int = 5
-    ) -> List[Dict[str, Any]]:
+        self, query_embedding: list[float], top_k: int = 5
+    ) -> list[dict[str, Any]]:
         results = self._client.search(
             collection_name=self._collection,
             query_vector=query_embedding,
@@ -336,7 +335,7 @@ class QdrantStore(VectorStore):
             })
         return output
 
-    def delete(self, document_ids: List[str]) -> None:
+    def delete(self, document_ids: list[str]) -> None:
         from qdrant_client.models import PointIdsList
         self._client.delete(
             collection_name=self._collection,
@@ -362,7 +361,7 @@ class VectorStoreFactory:
 
     @staticmethod
     def get_store(
-        backend: Optional[str] = None,
+        backend: str | None = None,
         **kwargs: Any,
     ) -> VectorStore:
         backend = backend or os.environ.get("VECTOR_STORE_BACKEND", "chroma")

@@ -4,14 +4,15 @@ DenseRetriever: top-k cosine similarity via ChromaDB.
 HybridRetriever: PLACEHOLDER — dense + BM25 sparse search (post W6 Day 4).
 """
 from __future__ import annotations
-from typing import List, Dict, Any
+
+from typing import Any
 
 from src.rag.legacy_embeddings import BaseEmbeddingModel, get_default_embedder
 from src.rag.legacy_vector_store import ChromaDBStore, VectorStore
 
 
 class BaseRetriever:
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         raise NotImplementedError
 
 
@@ -29,7 +30,7 @@ class DenseRetriever(BaseRetriever):
         self.store = vector_store or ChromaDBStore()
         self.embedder = embedder or get_default_embedder()
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         """
         Args:
             query: Natural language question from the user.
@@ -64,7 +65,7 @@ class HybridRetriever(BaseRetriever):
         self.alpha = alpha
         # PLACEHOLDER: self._bm25 = BM25Retriever(corpus_chunks)
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         # TODO: merge dense + BM25 scores, re-rank
         # For now: delegate to dense only
         return self._dense.retrieve(query, top_k=top_k)

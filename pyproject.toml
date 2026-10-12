@@ -43,6 +43,11 @@ dependencies = [
 [tool.black]
 line-length = 88
 
+[tool.ruff.lint]
+# BLE001: pipeline components degrade gracefully (cache, PII, compression, sparse search) and log the error.
+# B008: FastAPI dependency defaults such as File(...) are the framework idiom.
+extend-ignore = ["BLE001", "B008"]
+
 [tool.isort]
 profile = "black"
 

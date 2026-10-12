@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMJudge:
-    def __init__(self, model: str = None):
+    def __init__(self, model: str | None = None):
         self.source = getattr(settings, "JUDGE_SOURCE", "openai").lower()
 
         if self.source == "openai":
@@ -88,8 +88,8 @@ class LLMJudge:
                         if k in parsed:
                             default_scores[k] = float(parsed[k])
                     return default_scores
-            except:
-                pass
+            except (json.JSONDecodeError, ValueError, TypeError) as parse_err:
+                logger.debug(f"Judge JSON parse failed, using regex fallback: {parse_err}")
 
             # fallback regex
             for k in default_scores:

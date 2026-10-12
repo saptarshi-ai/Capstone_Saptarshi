@@ -2,12 +2,10 @@
 Golden Set Evaluation Logic.
 """
 
-import asyncio
 import json
 import logging
-import statistics
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import tiktoken
 
@@ -17,7 +15,7 @@ from pipeline.inference import InferencePipeline
 logger = logging.getLogger(__name__)
 
 
-def load_golden_set(filepath: str) -> List[Dict]:
+def load_golden_set(filepath: str) -> list[dict]:
     dataset = []
     # Using a simple JSON parser since the format is a pseudo JSON-list
     # In practice, we'll read it as a single string and parse the list.
@@ -34,7 +32,7 @@ def load_golden_set(filepath: str) -> List[Dict]:
 
 
 async def run_evaluation(
-    golden_dataset: List[Dict], pipeline: InferencePipeline, judge: LLMJudge
+    golden_dataset: list[dict], pipeline: InferencePipeline, judge: LLMJudge
 ):
     results = []
 
@@ -142,6 +140,8 @@ async def run_evaluation(
                 "generated_answer": answer,
                 "level": item_level,
                 "latency": total_latency,
+                "retrieval_latency": retrieval_latency,
+                "generation_latency": generation_latency,
                 "total_time_taken": total_latency,
                 "cost": cost_per_query,
                 "task_success": task_success,
@@ -159,7 +159,7 @@ async def run_evaluation(
     return results
 
 
-def aggregate_metrics(results: List[Dict]) -> Dict[str, Any]:
+def aggregate_metrics(results: list[dict]) -> dict[str, Any]:
     if not results:
         return {}
 

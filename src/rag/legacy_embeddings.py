@@ -4,20 +4,21 @@ Unified interface over OpenAI and HuggingFace embedding models.
 Same model must be used for both documents and queries.
 """
 from __future__ import annotations
+
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import List
+
 import openai
 
 
 class BaseEmbeddingModel(ABC):
     @abstractmethod
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> list[float]:
         ...
 
     @abstractmethod
-    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+    def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         ...
 
 
@@ -30,14 +31,14 @@ class OpenAIEmbeddings(BaseEmbeddingModel):
         self.model = model
         self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> list[float]:
         text = text.replace("\n", " ").strip()
         response = self.client.embeddings.create(input=[text], model=self.model)
         return response.data[0].embedding
 
     def get_embeddings_batch(
-        self, texts: List[str], batch_size: int = 100, retry_delay: float = 1.0
-    ) -> List[List[float]]:
+        self, texts: list[str], batch_size: int = 100, retry_delay: float = 1.0
+    ) -> list[list[float]]:
         """
         Embed a list of texts in batches to respect API limits.
         Retries once on rate-limit errors.
@@ -78,10 +79,10 @@ class HuggingFaceEmbeddings(BaseEmbeddingModel):
         except ImportError:
             raise ImportError("Run: pip install sentence-transformers")
 
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str) -> list[float]:
         return self.model.encode(text).tolist()
 
-    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+    def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         return self.model.encode(texts).tolist()
 
 

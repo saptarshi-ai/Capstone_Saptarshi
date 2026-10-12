@@ -16,7 +16,6 @@ class BasePromptCompressor(ABC):
         """
         Compresses the given context string based on the query.
         """
-        pass
 
 
 class LLMLingua2PromptCompressor(BasePromptCompressor):

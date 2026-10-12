@@ -24,7 +24,6 @@ import math
 import os
 import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from config.settings import settings
 
@@ -37,26 +36,24 @@ class BaseVectorStore(ABC):
         file_type: str,
         chunks: list,
         embeddings: list,
-        sparse_embeddings: list = None,
+        sparse_embeddings: list | None = None,
     ):
         """
         Adds a document's chunks and embeddings to the vector store.
         If the filename already exists, it overwrites the existing data to avoid duplication.
         """
-        pass
 
     @abstractmethod
     def search(
         self,
         query_embedding: list[float],
         top_k: int = 5,
-        sparse_embedding: dict = None,
+        sparse_embedding: dict | None = None,
     ) -> list[dict]:
         """
         Searches the vector store for chunks matching the query embedding.
         Returns a list of dictionaries containing 'chunk' and 'metadata'.
         """
-        pass
 
 
 class JSONVectorStore(BaseVectorStore):
@@ -74,12 +71,11 @@ class JSONVectorStore(BaseVectorStore):
         file_type: str,
         chunks: list,
         embeddings: list,
-        sparse_embeddings: list = None,
+        sparse_embeddings: list | None = None,
     ):
         from rag.scratch import delete_from_json
 
         delete_from_json(filename)
-        from config.settings import settings
 
         data = {}
         if os.path.exists(self.filepath):
@@ -113,7 +109,7 @@ class JSONVectorStore(BaseVectorStore):
         self,
         query_embedding: list[float],
         top_k: int = 5,
-        sparse_embedding: dict = None,
+        sparse_embedding: dict | None = None,
     ) -> list[dict]:
         data = {}
         if os.path.exists(self.filepath):
@@ -215,7 +211,7 @@ class ChromaDBStore(BaseVectorStore):
         file_type: str,
         chunks: list,
         embeddings: list,
-        sparse_embeddings: list = None,
+        sparse_embeddings: list | None = None,
     ):
         if not chunks or not embeddings:
             return
@@ -224,7 +220,6 @@ class ChromaDBStore(BaseVectorStore):
 
         delete_from_chroma(filename)
 
-        from config.settings import settings
 
         ids = []
         metadata = []
@@ -250,7 +245,7 @@ class ChromaDBStore(BaseVectorStore):
         self,
         query_embedding: list[float],
         top_k: int = 5,
-        sparse_embedding: dict = None,
+        sparse_embedding: dict | None = None,
     ) -> list[dict]:
         if not self.collection:
             return []
@@ -303,7 +298,7 @@ class QdrantStore(BaseVectorStore):
         file_type: str,
         chunks: list,
         embeddings: list,
-        sparse_embeddings: list = None,
+        sparse_embeddings: list | None = None,
     ):
         if not chunks or not embeddings:
             return
@@ -377,7 +372,7 @@ class QdrantStore(BaseVectorStore):
         self,
         query_embedding: list[float],
         top_k: int = 5,
-        sparse_embedding: dict = None,
+        sparse_embedding: dict | None = None,
     ) -> list[dict]:
         from qdrant_client import models
 
@@ -409,7 +404,7 @@ class QdrantStore(BaseVectorStore):
                     using="dense",
                     limit=top_k,
                 )
-        except Exception as e:
+        except Exception:
             try:
                 # Fallback to unnamed vector (old schema)
                 temp = self.client.query_points(

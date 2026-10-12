@@ -3,13 +3,13 @@ SQLite Experiment Tracking.
 Logs every eval run and individual test case results to data/db/eval_runs.db.
 """
 from __future__ import annotations
+
 import csv
 import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -40,7 +40,7 @@ class ExperimentTracker:
         self._conn.executescript(_DDL)
         self._conn.commit()
 
-    def log_run(self, config: Dict[str, Any], notes: str = "") -> int:
+    def log_run(self, config: dict[str, Any], notes: str = "") -> int:
         """Insert a new run record. Returns run_id."""
         cur = self._conn.execute(
             "INSERT INTO runs (created_at, config, notes) VALUES (?, ?, ?)",
@@ -58,7 +58,7 @@ class ExperimentTracker:
         ideal: str,
         judge_score: float,
         latency_s: float = 0.0,
-        extra: Optional[Dict] = None,
+        extra: dict | None = None,
     ) -> None:
         self._conn.execute(
             """INSERT INTO eval_cases
@@ -71,7 +71,7 @@ class ExperimentTracker:
         )
         self._conn.commit()
 
-    def get_run_summary(self, run_id: int) -> Dict[str, Any]:
+    def get_run_summary(self, run_id: int) -> dict[str, Any]:
         cur = self._conn.execute(
             """SELECT AVG(judge_score), AVG(latency_s), COUNT(*)
                FROM eval_cases WHERE run_id = ?""",

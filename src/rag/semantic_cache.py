@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from config.settings import settings
 from rag.embeddings import ModelSelector
@@ -108,7 +108,6 @@ class SemanticCache:
         if not self.collection_exist:
             return None
 
-        from qdrant_client import models
 
         try:
             try:
@@ -159,7 +158,7 @@ class SemanticCache:
                 except json.JSONDecodeError:
                     data = []
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "SEMANTIC_CACHE_TTL_HOURS", 24.0)
 
         data.append(
@@ -176,7 +175,7 @@ class SemanticCache:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     def _set_chroma(self, query: str, query_embedding: list[float], answer: str):
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "SEMANTIC_CACHE_TTL_HOURS", 24.0)
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, query))
         self.collection.upsert(
@@ -201,7 +200,7 @@ class SemanticCache:
             )
             self.collection_exist = True
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         ttl = getattr(settings, "SEMANTIC_CACHE_TTL_HOURS", 24.0)
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, query))
         self.client.upsert(

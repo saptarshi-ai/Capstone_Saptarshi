@@ -4,8 +4,10 @@ Two-agent loop: Creator generates an answer; Critic finds flaws; Creator improve
 Experimental — used for red-teaming the RAG pipeline.
 """
 from __future__ import annotations
+
 import os
-from typing import Any, Dict, List
+from typing import Any
+
 import openai
 
 
@@ -38,7 +40,7 @@ class CriticCreatorAgent:
         query: str,
         context: str,
         initial_answer: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Returns {final_answer: str, trace: List[{round, answer, critique}]}
         """
@@ -46,7 +48,7 @@ class CriticCreatorAgent:
             "You are a helpful HR policy assistant. Answer using ONLY the provided context.",
             f"Context:\n{context}\n\nQuestion: {query}",
         )
-        trace: List[Dict] = []
+        trace: list[dict] = []
 
         for round_num in range(1, self.max_rounds + 1):
             critique = self._call(

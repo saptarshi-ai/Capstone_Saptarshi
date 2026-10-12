@@ -8,7 +8,6 @@ Classes:
 """
 
 import asyncio
-import os
 from pathlib import Path
 
 from config.logging_config import setup_logger

@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 
 
 class InferencePipeline:
-    def __init__(self, top_k: int = None):
+    def __init__(self, top_k: int | None = None):
         logger.info("Initializing InferencePipeline")
 
         self.top_k = top_k or getattr(settings, "TOP_K", 5)

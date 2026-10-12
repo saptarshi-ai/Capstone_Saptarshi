@@ -15,7 +15,7 @@ Context:
 User Question: {query}
 Answer:"""
     except Exception as e:
-        logger.error(f"Error building generator prompt: {str(e)}")
+        logger.error(f"Error building generator prompt: {e!s}")
         raise
 
 
@@ -43,7 +43,7 @@ Context: {context_str}
 Generated Answer: {generated_answer}
 """
     except Exception as e:
-        logger.error(f"Error building comprehensive eval prompt: {str(e)}")
+        logger.error(f"Error building comprehensive eval prompt: {e!s}")
         raise
 
 
@@ -58,7 +58,7 @@ Provide these alternative questions separated by newlines. DO NOT number them. D
 
 Original question: {query}"""
     except Exception as e:
-        logger.error(f"Error building multi-query prompt: {str(e)}")
+        logger.error(f"Error building multi-query prompt: {e!s}")
         raise
 
 
@@ -70,7 +70,7 @@ The goal is to break down the input into a set of sub-problems / sub-questions t
 Generate multiple search queries related to: {query} \n
 Output (3 queries): Provide these alternative questions separated by newlines. DO NOT number them. DO NOT add any extra text."""
     except Exception as e:
-        logger.error(f"Error building query decomposition prompt: {str(e)}")
+        logger.error(f"Error building query decomposition prompt: {e!s}")
         raise
 
 
@@ -84,7 +84,7 @@ Do not include any introductory or concluding remarks, just the passage itself.
 Question: {query}
 Passage:"""
     except Exception as e:
-        logger.error(f"Error building HyDE prompt: {str(e)}")
+        logger.error(f"Error building HyDE prompt: {e!s}")
         raise
 
 
@@ -98,5 +98,5 @@ Return ONLY the rewritten query text. Do not include any intro, outro, or quotes
 Original query: {query}
 Rewritten query:"""
     except Exception as e:
-        logger.error(f"Error building query rewriting prompt: {str(e)}")
+        logger.error(f"Error building query rewriting prompt: {e!s}")
         raise

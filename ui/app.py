@@ -5,9 +5,10 @@ Connects to the FastAPI backend at http://localhost:8000.
 Run: streamlit run ui/app.py
 (Backend must be running: uvicorn api.main:app --reload)
 """
-import streamlit as st
-import requests
 from pathlib import Path
+
+import requests
+import streamlit as st
 
 API_BASE = "http://localhost:8000"
 
@@ -49,12 +50,11 @@ with st.sidebar:
     st.divider()
     handbook_path = Path("data/temp/basecamp_handbook.md")
     if handbook_path.exists() and st.button("⚡ Index Handbook (quick start)"):
-        with st.spinner("Indexing Basecamp handbook..."):
-            with open(handbook_path, "rb") as f:
-                resp = requests.post(
-                    f"{API_BASE}/upload",
-                    files={"file": ("basecamp_handbook.md", f, "text/plain")},
-                )
+        with st.spinner("Indexing Basecamp handbook..."), open(handbook_path, "rb") as f:
+            resp = requests.post(
+                f"{API_BASE}/upload",
+                files={"file": ("basecamp_handbook.md", f, "text/plain")},
+            )
         if resp.ok:
             st.success(f"✅ Handbook indexed: {resp.json()['chunks_added']} chunks")
         else:
@@ -85,33 +85,32 @@ if prompt := st.chat_input("Ask about benefits, PTO, insurance, sabbatical..."):
         st.markdown(prompt)
 
     # Call API
-    with st.chat_message("assistant"):
-        with st.spinner("Searching handbook..."):
-            try:
-                resp = requests.post(
-                    f"{API_BASE}/query",
-                    json={"query": prompt, "top_k": top_k},
-                    timeout=30,
-                )
-                if resp.ok:
-                    data = resp.json()
-                    answer = data["answer"]
-                    sources = data.get("sources", [])
-                    st.markdown(answer)
-                    if sources:
-                        with st.expander("📎 Retrieved Sources"):
-                            for i, src in enumerate(sources, 1):
-                                st.markdown(f"**[{i}]** {src}")
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources,
-                    })
-                else:
-                    err = f"Error {resp.status_code}: {resp.text}"
-                    st.error(err)
-                    st.session_state.messages.append({"role": "assistant", "content": err})
-            except requests.ConnectionError:
-                msg = "⚠️ Cannot reach the API. Run: `uvicorn api.main:app --reload`"
-                st.error(msg)
-                st.session_state.messages.append({"role": "assistant", "content": msg})
+    with st.chat_message("assistant"), st.spinner("Searching handbook..."):
+        try:
+            resp = requests.post(
+                f"{API_BASE}/query",
+                json={"query": prompt, "top_k": top_k},
+                timeout=30,
+            )
+            if resp.ok:
+                data = resp.json()
+                answer = data["answer"]
+                sources = data.get("sources", [])
+                st.markdown(answer)
+                if sources:
+                    with st.expander("📎 Retrieved Sources"):
+                        for i, src in enumerate(sources, 1):
+                            st.markdown(f"**[{i}]** {src}")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": sources,
+                })
+            else:
+                err = f"Error {resp.status_code}: {resp.text}"
+                st.error(err)
+                st.session_state.messages.append({"role": "assistant", "content": err})
+        except requests.ConnectionError:
+            msg = "⚠️ Cannot reach the API. Run: `uvicorn api.main:app --reload`"
+            st.error(msg)
+            st.session_state.messages.append({"role": "assistant", "content": msg})

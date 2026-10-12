@@ -9,17 +9,18 @@ Endpoints:
 Run: uvicorn api.main:app --reload --port 8000
 """
 from __future__ import annotations
+
 import time
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, File, HTTPException, UploadFile
 
-from src.schemas.api import QueryRequest, QueryResponse, UploadResponse
+from src.pipeline.run_tracker import ExperimentTracker
 from src.rag.chunking import chunk_by_characters
 from src.rag.legacy_embeddings import get_default_embedder
-from src.rag.legacy_vector_store import ChromaDBStore
-from src.rag.legacy_retriever import DenseRetriever
 from src.rag.legacy_generator import LLMGenerator
-from src.pipeline.run_tracker import ExperimentTracker
+from src.rag.legacy_retriever import DenseRetriever
+from src.rag.legacy_vector_store import ChromaDBStore
+from src.schemas.api import QueryRequest, QueryResponse, UploadResponse
 
 app = FastAPI(
     title="Basecamp Handbook RAG API",

@@ -3,11 +3,13 @@ Pairwise A/B comparison (W5 judge pattern).
 Flips position to remove ordering bias.
 """
 from __future__ import annotations
+
 import json
 import os
 import re
 import time
-from typing import Dict, Any
+from typing import Any
+
 import openai
 
 _PAIRWISE_PROMPT = """You are judging two AI-generated answers to the same question.
@@ -50,7 +52,7 @@ class PairwiseJudge:
         parsed = json.loads(raw)
         return parsed.get("winner", "tie")
 
-    def compare(self, query: str, answer_a: str, answer_b: str) -> Dict[str, Any]:
+    def compare(self, query: str, answer_a: str, answer_b: str) -> dict[str, Any]:
         """
         Returns {winner: "A"|"B"|"tie", reason: str, consistent: bool}
         consistent=True means both orderings agreed.

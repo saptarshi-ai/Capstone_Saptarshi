@@ -3,16 +3,16 @@ Text Splitting and Chunking Strategies.
 Implements fixed-size sliding-window chunking (W6 style) and token-aware splitting.
 """
 from __future__ import annotations
+
 import re
 from abc import ABC, abstractmethod
-from typing import List
 
 
 def chunk_by_characters(
     text: str,
     chunk_size: int = 500,
     overlap: int = 50,
-) -> List[str]:
+) -> list[str]:
     """
     Recursive character text splitting with sliding-window overlap.
     Splits on paragraph boundaries first, then sentences, then words.
@@ -74,7 +74,7 @@ def chunk_by_characters(
     return [c for c in merged if c]
 
 
-def chunk_by_tokens(text: str, max_tokens: int = 512) -> List[str]:
+def chunk_by_tokens(text: str, max_tokens: int = 512) -> list[str]:
     """
     Token-aware splitting using rough word-count approximation.
     Each word ≈ 1.3 tokens (OpenAI rule of thumb).
@@ -94,7 +94,7 @@ def chunk_by_tokens(text: str, max_tokens: int = 512) -> List[str]:
 
 class BaseChunker(ABC):
     @abstractmethod
-    def chunk(self, text: str) -> List[str]:
+    def chunk(self, text: str) -> list[str]:
         ...
 
 
@@ -104,7 +104,7 @@ class SlidingWindowChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.overlap = overlap
 
-    def chunk(self, text: str) -> List[str]:
+    def chunk(self, text: str) -> list[str]:
         return chunk_by_characters(text, self.chunk_size, self.overlap)
 
 
@@ -118,7 +118,7 @@ class SectionChunking(BaseChunker):
     def __init__(self, min_chunk_chars: int = 100):
         self.min_chunk_chars = min_chunk_chars
 
-    def chunk(self, text: str) -> List[str]:
+    def chunk(self, text: str) -> list[str]:
         # Split on lines that start with one or more # characters
         header_pattern = re.compile(r"^(#{1,6}\s.+)$", re.MULTILINE)
         positions = [m.start() for m in header_pattern.finditer(text)]
@@ -183,13 +183,13 @@ class SemanticChunker(BaseChunker):
         return self._model
 
     @staticmethod
-    def _cosine(a: List[float], b: List[float]) -> float:
+    def _cosine(a: list[float], b: list[float]) -> float:
         dot = sum(x * y for x, y in zip(a, b))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(y * y for y in b) ** 0.5
         return dot / (norm_a * norm_b + 1e-9)
 
-    def chunk(self, text: str) -> List[str]:
+    def chunk(self, text: str) -> list[str]:
         import re as _re
         # Split into sentences on ". ", "! ", "? "
         sentence_endings = _re.compile(r"(?<=[.!?])\s+")
@@ -242,10 +242,10 @@ class SlidingWindowChunking:
         self.chunk_size = chunk_size
         self.overlap = overlap
 
-    async def chunk(self, text: str) -> List[str]:
+    async def chunk(self, text: str) -> list[str]:
         if not text:
             return []
-        chunks: List[str] = []
+        chunks: list[str] = []
         start, n = 0, len(text)
         step = max(1, self.chunk_size - self.overlap)
         while start < n:

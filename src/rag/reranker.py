@@ -14,11 +14,10 @@ class BaseReranker(ABC):
         Each document is a dict containing at least a 'chunk' string.
         Returns the top_k sorted list of documents.
         """
-        pass
 
 
 class CrossEncoderReranker(BaseReranker):
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str | None = None):
         self.model_name = model_name or settings.RERANKER_MODEL
         logger.info(f"Initializing CrossEncoderReranker with model: {self.model_name}")
         try:

@@ -4,9 +4,11 @@ Injects retrieved context into the prompt and calls GPT-4o.
 Supports streaming (token-by-token) for the Streamlit UI.
 """
 from __future__ import annotations
+
 import os
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, List, Dict, Any
+from typing import Any
 
 import openai
 
@@ -17,7 +19,7 @@ def _load_prompt(filename: str) -> str:
     return (_PROMPT_DIR / filename).read_text().strip()
 
 
-def _build_context_block(retrieved: List[Dict[str, Any]]) -> str:
+def _build_context_block(retrieved: list[dict[str, Any]]) -> str:
     """Format retrieved chunks into a numbered context block."""
     if not retrieved:
         return "(No relevant context found.)"
@@ -40,7 +42,7 @@ class LLMGenerator:
         self._system_prompt = _load_prompt("system_prompt.txt")
         self._user_prompt_template = _load_prompt("user_prompt.txt")
 
-    def _build_messages(self, query: str, retrieved: List[Dict[str, Any]]) -> list:
+    def _build_messages(self, query: str, retrieved: list[dict[str, Any]]) -> list:
         context_block = _build_context_block(retrieved)
         user_msg = self._user_prompt_template.format(
             context=context_block, query=query
@@ -51,8 +53,8 @@ class LLMGenerator:
         ]
 
     def generate_answer(
-        self, query: str, retrieved_context: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, query: str, retrieved_context: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """
         Returns:
             {answer: str, sources: List[str], model: str}
@@ -76,7 +78,7 @@ class LLMGenerator:
         }
 
     def generate_stream(
-        self, query: str, retrieved_context: List[Dict[str, Any]]
+        self, query: str, retrieved_context: list[dict[str, Any]]
     ) -> Generator[str, None, None]:
         """
         Yields answer tokens one by one for Streamlit streaming.

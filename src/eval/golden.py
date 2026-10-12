@@ -3,15 +3,17 @@ Golden Set Evaluation.
 Loads the JSONL benchmark, runs the RAG pipeline, scores with the judge.
 """
 from __future__ import annotations
+
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 from src.eval.judge import LLMJudge
 
 
-def load_golden_set(filepath: str = "data/golden_set.jsonl") -> List[Dict[str, Any]]:
+def load_golden_set(filepath: str = "data/golden_set.jsonl") -> list[dict[str, Any]]:
     """
     Parses the JSONL golden set.
     Each line: {id, question, ideal_answer, notes, level}
@@ -28,11 +30,11 @@ def load_golden_set(filepath: str = "data/golden_set.jsonl") -> List[Dict[str, A
 
 
 def run_evaluation(
-    golden_dataset: List[Dict[str, Any]],
-    rag_pipeline: Callable[[str], Dict[str, Any]],
+    golden_dataset: list[dict[str, Any]],
+    rag_pipeline: Callable[[str], dict[str, Any]],
     judge: LLMJudge | None = None,
     verbose: bool = True,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Runs full benchmark against golden set.
     
@@ -84,7 +86,7 @@ def run_evaluation(
     return results
 
 
-def aggregate_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
+def aggregate_metrics(results: list[dict[str, Any]]) -> dict[str, float]:
     """
     Computes average faithfulness, relevance, composite, latency.
     Also breaks down by level (happy_path / hard_path / edge_path).
